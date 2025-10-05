@@ -1,14 +1,14 @@
 steps:
   # 1) backend の Docker イメージをビルド
   - name: 'gcr.io/cloud-builders/docker'
+    dir: 'backend'                             # ★ここを追加
     args: ['build', '-t', '${_IMAGE}:$SHORT_SHA', '.']
-    dir: 'backend'
 
   # 2) Artifact Registry へ push
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', '${_IMAGE}:$SHORT_SHA']
 
-  # 3) Cloud Run へデプロイ（Secret を環境変数として注入）
+  # 3) Cloud Run へデプロイ
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
@@ -20,14 +20,10 @@ steps:
       - '--platform=managed'
       - '--allow-unauthenticated'
       - '--set-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest'
-      # 実行SAを変えたい場合はコメントアウト解除:
-      # - '--service-account=${_RUNTIME_SA}'
 
 images:
   - '${_IMAGE}:$SHORT_SHA'
-
 substitutions:
   _REGION: 'asia-northeast1'
   _SERVICE: 'grow-backend'
   _IMAGE: '${_REGION}-docker.pkg.dev/$PROJECT_ID/containers/grow-backend'
-  # _RUNTIME_SA: '<runtime-sa>@$PROJECT_ID.iam.gserviceaccount.com'  # 任意
