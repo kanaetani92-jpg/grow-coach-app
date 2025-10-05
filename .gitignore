@@ -1,0 +1,30 @@
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+*.log
+
+# Env
+.env
+.env.*.local
+/frontend/.env.local
+/backend/.env
+
+# Node
+node_modules/
+
+# Next.js / Frontend
+/frontend/.next/
+/frontend/out/
+/frontend/.vercel/
+
+# Backend build
+/backend/dist/
+
+# Misc
+*.local

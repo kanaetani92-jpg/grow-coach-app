@@ -1,0 +1,6 @@
+{
+  "name": "grow-coach-app",
+  "private": true,
+  "packageManager": "pnpm@9.15.9",
+  "workspaces": ["frontend", "backend"]
+}

@@ -1,0 +1,64 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---- Theme (emerald base) ---- */
+/* Tailwindのパレット相当色をHEXで定義（theme()は使わない） */
+:root{
+  --bg: #ecfdf5;            /* emerald-50 */
+  --card: #ffffff;
+  --ink: #022c22;           /* emerald-950 */
+  --ink-subtle: #047857;    /* emerald-700 */
+  --accent: #059669;        /* emerald-600 */
+  --accent-strong: #047857; /* emerald-700 */
+  --accent-weak: #d1fae5;   /* emerald-100 */
+}
+
+/* 全体 */
+html, body { height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-feature-settings: "ss01","cv01";
+}
+
+/* スクロールバー */
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb { background: #6ee7b7; border-radius: 9999px; } /* emerald-300 */
+*::-webkit-scrollbar-track { background: #d1fae5; }                        /* emerald-100 */
+
+/* フォーカス */
+:focus-visible { outline: 3px solid #34d399; outline-offset: 2px; }        /* emerald-400 */
+/* ===== LINE風 吹き出し ===== */
+.bubble { position: relative; max-width: 80%; border-radius: 18px; padding: 10px 12px; }
+.bubble-user { background: #10b981; color: #fff; border: 1px solid #10b981; }      /* emerald-500 */
+.bubble-coach { background: #ffffff; color: #064e3b; border: 1px solid #a7f3d0; }  /* emerald-900/200 */
+
+.bubble-user::after {
+  content: ""; position: absolute; right: -6px; top: 14px;
+  border-width: 8px 0 8px 8px; border-style: solid;
+  border-color: transparent transparent transparent #10b981;
+}
+
+.bubble-coach::before {
+  content: ""; position: absolute; left: -6px; top: 14px;
+  border-width: 8px 8px 8px 0; border-style: solid;
+  border-color: transparent #ffffff transparent transparent;
+}
+.bubble-coach::after {
+  content: ""; position: absolute; left: -7px; top: 14px;  /* 外枠用（薄い境界） */
+  border-width: 9px 9px 9px 0; border-style: solid;
+  border-color: transparent #a7f3d0 transparent transparent;
+  z-index: -1;
+}
+
+/* 吹き出し内の長文をきれいに折返し */
+.bubble { white-space: pre-wrap; word-break: break-word; }
+.msg-time { font-size: 11px; opacity: .75; }
+.avatar {
+  width: 32px; height: 32px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-weight: 700;
+}
+.avatar-user { background: linear-gradient(135deg,#10b981,#059669); color:#fff; }
+.avatar-coach{ background: #e2e8f0; color:#0f172a; } /* slate系 */
