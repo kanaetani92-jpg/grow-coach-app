@@ -1,39 +1,53 @@
 // frontend/src/lib/api.ts
-import { getAuth } from "firebase/auth";
-import { auth } from "./firebase"; // 既存の firebase.ts が export しているはず
+const BASE = process.env.NEXT_PUBLIC_BACKEND_URL ?? "https://grow-backend-821934913153.asia-northeast1.run.app";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE!; // 例: https://grow-backend-...run.app
+type Json = Record<string, unknown>;
 
-/** Firebase IDトークンを取得して Authorization ヘッダーを付ける共通fetch */
-async function authedFetch(path: string, init: RequestInit = {}) {
-  // 念のため auth を初期化済み想定（./firebase で initializeApp 済）
-  const user = getAuth().currentUser;
-  if (!user) throw new Error("not-signed-in"); // 未ログイン
-
-  const idToken = await user.getIdToken(true);
-
-  return fetch(`${API_BASE}${path}`, {
-    ...init,
+async function jsonFetch<T = Json>(
+  path: string,
+  opts: RequestInit & { authToken?: string } = {}
+): Promise<T> {
+  const { authToken, headers, ...rest } = opts;
+  const res = await fetch(`${BASE}${path}`, {
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
-      ...(init.headers || {}),
-      // ←← これが「どこに何を付けるか」の答えです
-      Authorization: `Bearer ${idToken}`,
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+      ...(headers || {}),
     },
+    ...rest,
   });
+  if (!res.ok) {
+    // レスポンス本文にエラーがあれば拾う
+    let detail = "";
+    try {
+      const j = (await res.json()) as { error?: string };
+      if (j?.error) detail = ` (${j.error})`;
+    } catch {}
+    throw new Error(`${res.status} ${res.statusText}${detail}`);
+  }
+  // 成功時に JSON を返す（空なら {}）
+  try {
+    return (await res.json()) as T;
+  } catch {
+    return {} as T;
+  }
 }
 
-export async function createSession() {
-  const res = await authedFetch("/api/sessions", { method: "POST", body: "{}" });
-  if (!res.ok) throw new Error("createSession failed");
-  return res.json() as Promise<{ sessionId: string; stage: string }>;
-}
-
-export async function callCoach(sessionId: string, userText: string) {
-  const res = await authedFetch("/api/coach", {
+/** セッション作成: 必ず Firebase の ID トークンを渡す */
+export async function createSession(idToken: string) {
+  return jsonFetch("/api/sessions", {
     method: "POST",
-    body: JSON.stringify({ sessionId, userText }),
+    body: JSON.stringify({}), // サーバーが本文不要なら空でOK
+    authToken: idToken,
   });
-  if (!res.ok) throw new Error("coach failed");
-  return res.json() as Promise<{ stage: string; message: string; next_fields: string[] }>;
+}
+
+/** コーチ呼び出し: こちらも Authorization を付与 */
+export async function callCoach(idToken: string, payload: { message: string }) {
+  return jsonFetch("/api/coach", {
+    method: "POST",
+    body: JSON.stringify(payload),
+    authToken: idToken,
+  });
 }
