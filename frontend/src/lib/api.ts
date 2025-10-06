@@ -1,53 +1,43 @@
-// frontend/src/lib/api.ts
-const BASE = process.env.NEXT_PUBLIC_BACKEND_URL ?? "https://grow-backend-821934913153.asia-northeast1.run.app";
+const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? "";
 
-type Json = Record<string, unknown>;
-
-async function jsonFetch<T = Json>(
-  path: string,
-  opts: RequestInit & { authToken?: string } = {}
-): Promise<T> {
-  const { authToken, headers, ...rest } = opts;
-  const res = await fetch(`${BASE}${path}`, {
-    credentials: "include",
+export async function createSession(idToken: string) {
+  const res = await fetch(`${BASE_URL}/api/sessions`, {
+    method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-      ...(headers || {}),
+      Authorization: `Bearer ${idToken}`,
     },
-    ...rest,
+    credentials: "include",
+    body: JSON.stringify({}), // サーバ側が空ボディでOKならそのまま
   });
   if (!res.ok) {
-    // レスポンス本文にエラーがあれば拾う
-    let detail = "";
-    try {
-      const j = (await res.json()) as { error?: string };
-      if (j?.error) detail = ` (${j.error})`;
-    } catch {}
-    throw new Error(`${res.status} ${res.statusText}${detail}`);
-  }
-  // 成功時に JSON を返す（空なら {}）
-  try {
-    return (await res.json()) as T;
-  } catch {
-    return {} as T;
+    const err = await res.text().catch(() => "");
+    throw new Error(`createSession failed: ${res.status} ${err}`);
   }
 }
 
-/** セッション作成: 必ず Firebase の ID トークンを渡す */
-export async function createSession(idToken: string) {
-  return jsonFetch("/api/sessions", {
+/** ← 第1引数を { message: string } にする */
+export async function callCoach(
+  body: { message: string },
+  idToken: string
+): Promise<string> {
+  const res = await fetch(`${BASE_URL}/api/coach`, {
     method: "POST",
-    body: JSON.stringify({}), // サーバーが本文不要なら空でOK
-    authToken: idToken,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${idToken}`,
+    },
+    credentials: "include",
+    body: JSON.stringify(body),
   });
-}
 
-/** コーチ呼び出し: こちらも Authorization を付与 */
-export async function callCoach(idToken: string, payload: { message: string }) {
-  return jsonFetch("/api/coach", {
-    method: "POST",
-    body: JSON.stringify(payload),
-    authToken: idToken,
-  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(
+      data?.error ? `callCoach failed: ${data.error}` : `callCoach failed: ${res.status}`
+    );
+  }
+
+  // サーバの返却形に合わせて取り出すキーを調整
+  return data.reply ?? data.message ?? "";
 }
