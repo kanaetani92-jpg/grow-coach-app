@@ -1,32 +1,56 @@
-'use client';
+"use client";
 
-import { useEffect, useState } from 'react';
-// 必要ならユーティリティを使う
-// import { completeEmailLink } from '@/lib/emailLink';
+import { useEffect, useState } from "react";
+import { auth } from "@/lib/firebase";
+import {
+  isSignInWithEmailLink,
+  signInWithEmailLink,
+  onAuthStateChanged,
+} from "firebase/auth";
+import { createSession } from "@/lib/api";
 
-export default function EmailLinkCompletePage() {
-  const [status, setStatus] = useState<'pending' | 'ok' | 'error'>('pending');
-  const [message, setMessage] = useState<string>('');
+export default function EmailLinkComplete() {
+  const [status, setStatus] = useState("処理中...");
 
   useEffect(() => {
-    (async () => {
+    const run = async () => {
       try {
-        // ここでメールリンクの完了処理を行う
-        // await completeEmailLink();
-        setStatus('ok');
-        setMessage('メールリンクを確認しました。サインイン完了です。');
-      } catch (e: unknown) {
-        setStatus('error');
-        setMessage(e instanceof Error ? e.message : 'エラーが発生しました。');
+        // メールリンクかチェック
+        if (!isSignInWithEmailLink(auth, window.location.href)) {
+          setStatus("このURLは無効です。");
+          return;
+        }
+
+        // 送信時に保存したメール or 入力プロンプト
+        let email = localStorage.getItem("emailForSignIn") || "";
+        if (!email) {
+          email = window.prompt("メールアドレスを入力してください") || "";
+        }
+        if (!email) {
+          setStatus("メールアドレスが入力されませんでした。");
+          return;
+        }
+
+        // サインイン
+        await signInWithEmailLink(auth, email, window.location.href);
+        localStorage.removeItem("emailForSignIn");
+        setStatus("サインインに成功。セッションを作成しています...");
+
+        // IDトークン→セッション作成
+        const unsub = onAuthStateChanged(auth, async (user) => {
+          if (!user) return;
+          const idToken = await user.getIdToken();
+          await createSession(idToken);
+          setStatus("完了！トップへ戻ります...");
+          unsub();
+          window.location.replace("/");
+        });
+      } catch (e: any) {
+        setStatus(`エラー: ${e.message ?? e}`);
       }
-    })();
+    };
+    run();
   }, []);
 
-  return (
-    <main className="p-6">
-      <h1 className="text-xl font-bold mb-4">メールリンク認証</h1>
-      {status === 'pending' && <p>確認中...</p>}
-      {status !== 'pending' && <p>{message}</p>}
-    </main>
-  );
+  return <p className="p-4">{status}</p>;
 }

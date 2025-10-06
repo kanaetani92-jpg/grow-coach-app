@@ -1,115 +1,96 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { onAuthStateChanged, signInWithPopup } from "firebase/auth";
-import { auth, googleProvider } from "@/lib/firebase";
-import { createSession, callCoach } from "@/lib/api";
+import { useEffect, useRef, useState } from "react";
+import { auth } from "@/lib/firebase";
+import { onAuthStateChanged, signOut } from "firebase/auth";
+import { callCoach } from "@/lib/api";
 
-type ChatMsg = { role: "user" | "assistant"; content: string };
+type Msg = { role: "user" | "assistant"; content: string };
 
 export default function ChatClient() {
-  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [authed, setAuthed] = useState(false);
+  const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [loading, setLoading] = useState(false);
+  const tokenRef = useRef<string | null>(null);
 
-  // サインイン状態監視 & セッション作成
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        setUserEmail(user.email ?? "(no email)");
-        const idToken = await user.getIdToken();
-        await createSession(idToken); // Authorization: Bearer <token> 付きでPOST
-      } else {
-        setUserEmail(null);
+      if (!user) {
+        setAuthed(false);
+        tokenRef.current = null;
+        return;
       }
+      setAuthed(true);
+      tokenRef.current = await user.getIdToken();
     });
     return () => unsub();
   }, []);
 
-  async function handleSignIn() {
-    await signInWithPopup(auth, googleProvider);
-  }
-
-  async function handleSend() {
-  if (!input.trim()) return;
-
-  const userMsg: ChatMsg = { role: "user", content: input.trim() };
-  setMessages((m) => [...m, userMsg]);
-  setInput("");
-  setLoading(true);
-
-  try {
-    // ← ここを追加：現在ログイン中ユーザーの ID トークンを取得
-    const idToken = await auth.currentUser?.getIdToken();
-    if (!idToken) {
-      throw new Error("Not signed in");
+  const onSend = async () => {
+    const msg = input.trim();
+    if (!msg) return;
+    setMessages((m) => [...m, { role: "user", content: msg }]);
+    setInput("");
+    setLoading(true);
+    try {
+      const idToken = tokenRef.current!;
+      const reply = await callCoach({ message: msg }, idToken);
+      setMessages((m) => [...m, { role: "assistant", content: reply }]);
+    } catch (e: any) {
+      setMessages((m) => [
+        ...m,
+        { role: "assistant", content: `エラー: ${e.message ?? e}` },
+      ]);
+    } finally {
+      setLoading(false);
     }
+  };
 
-    // ← 2つ目の引数に idToken を渡す
-    const reply = await callCoach({ message: input.trim() }, idToken);
-
-    setMessages((m) => [...m, { role: "assistant", content: reply }]);
-  } finally {
-    setLoading(false);
+  if (!authed) {
+    return (
+      <p className="text-sm opacity-80">
+        ログインリンクでサインインするとチャットが有効になります。
+      </p>
+    );
   }
-}
-
 
   return (
-    <div className="space-y-4">
-      {/* サインインしてなければボタン表示 */}
-      {!userEmail ? (
-        <button
-          onClick={handleSignIn}
-          className="rounded-xl px-4 py-2 border"
-        >
-          Googleでサインイン
+    <div className="space-y-3">
+      <div className="flex justify-between items-center">
+        <span className="font-semibold">ログイン済み</span>
+        <button className="text-sm underline" onClick={() => signOut(auth)}>
+          サインアウト
         </button>
-      ) : (
-        <div className="text-sm text-gray-600">Signed in: {userEmail}</div>
-      )}
+      </div>
 
-      {/* 会話表示 */}
-      <div className="border rounded-xl p-4 min-h-[200px] bg-white">
+      <div className="h-64 overflow-auto border rounded p-3 bg-white/60">
         {messages.length === 0 ? (
-          <div className="text-gray-400">ここに会話が表示されます。</div>
+          <p className="opacity-60">ここに会話が表示されます。</p>
         ) : (
-          <ul className="space-y-2">
-            {messages.map((m, i) => (
-              <li key={i}>
-                <span className="font-semibold">{m.role === "user" ? "自分" : "AI"}</span>
-                ：{m.content}
-              </li>
-            ))}
-          </ul>
+          messages.map((m, i) => (
+            <div key={i} className="mb-2">
+              <span className="font-semibold mr-2">
+                {m.role === "user" ? "自分" : "AI"}
+              </span>
+              <span>{m.content}</span>
+            </div>
+          ))
         )}
       </div>
 
-      {/* 入力欄 */}
       <div className="flex gap-2">
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              handleSend();
-            }
-          }}
+          onKeyDown={(e) => e.key === "Enter" && onSend()}
           placeholder="メッセージを入力…（Enterで送信）"
-          className="flex-1 border rounded-xl px-3 py-2"
-          disabled={!userEmail || loading}
+          className="border rounded px-3 py-2 flex-1"
         />
-        <button
-          onClick={handleSend}
-          className="rounded-xl px-4 py-2 border"
-          disabled={!userEmail || loading}
-        >
-          送信
+        <button onClick={onSend} disabled={loading} className="border px-3 py-2 rounded">
+          {loading ? "送信中…" : "送信"}
         </button>
       </div>
-      {loading && <div className="text-sm text-gray-500">AIが考え中…</div>}
     </div>
   );
 }

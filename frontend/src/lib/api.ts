@@ -1,43 +1,39 @@
-const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? "";
+// API 呼び出しの共通ラッパー（Authorization: Bearer <idToken> を付与）
+const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_BASE_URL ?? ""; // 例: https://<CloudRun>/api
 
-export async function createSession(idToken: string) {
-  const res = await fetch(`${BASE_URL}/api/sessions`, {
+export async function createSession(idToken: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/sessions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${idToken}`,
     },
+    body: JSON.stringify({}),
     credentials: "include",
-    body: JSON.stringify({}), // サーバ側が空ボディでOKならそのまま
   });
   if (!res.ok) {
-    const err = await res.text().catch(() => "");
-    throw new Error(`createSession failed: ${res.status} ${err}`);
+    const text = await res.text();
+    throw new Error(`createSession failed: ${res.status} ${text}`);
   }
 }
 
-/** ← 第1引数を { message: string } にする */
 export async function callCoach(
-  body: { message: string },
+  payload: { message: string },
   idToken: string
 ): Promise<string> {
-  const res = await fetch(`${BASE_URL}/api/coach`, {
+  const res = await fetch(`${BASE_URL}/coach`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${idToken}`,
     },
+    body: JSON.stringify(payload),
     credentials: "include",
-    body: JSON.stringify(body),
   });
-
-  const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(
-      data?.error ? `callCoach failed: ${data.error}` : `callCoach failed: ${res.status}`
-    );
+    const text = await res.text();
+    throw new Error(`callCoach failed: ${res.status} ${text}`);
   }
-
-  // サーバの返却形に合わせて取り出すキーを調整
-  return data.reply ?? data.message ?? "";
+  const data = (await res.json()) as { reply: string };
+  return data.reply;
 }
