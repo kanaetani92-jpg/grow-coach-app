@@ -3,7 +3,7 @@ import { URL } from "url";
 import { existsSync, readFileSync } from "fs";
 import { resolve } from "path";
 
-import { verifyBearerToken } from "./auth.js";
+import { verifyBearerToken } from "./auth";
 import { db } from "./db.js";
 
 type Msg = { role: "user" | "coach"; content: string; createdAt: number };
