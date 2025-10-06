@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
-import { sendSignInLinkToEmail } from "firebase/auth";
+import { FormEvent, useState } from "react";
+import { ActionCodeSettings, sendSignInLinkToEmail } from "firebase/auth";
 import { auth } from "@/lib/firebase";
+import { getErrorMessage } from "@/lib/errors";
 
 // 送信後の遷移先（/email-link-complete ページで完了処理）
-const actionCodeSettings = {
+const actionCodeSettings: ActionCodeSettings = {
   url: typeof window !== "undefined"
     ? `${window.location.origin}/email-link-complete`
     : "https://example.com/email-link-complete", // SSR保険（実行時にはwindow側が使われる）
@@ -18,8 +19,8 @@ export default function EmailLinkForm() {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  const onSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
     setMsg(null);
     setErr(null);
     setSending(true);
@@ -28,8 +29,11 @@ export default function EmailLinkForm() {
       // 完了ページで取り出せるようにローカルに保持
       window.localStorage.setItem("emailForSignIn", email);
       setMsg("ログイン用リンクを送信しました。メールをご確認ください。");
-    } catch (e: any) {
-      setErr(e?.message ?? "メール送信に失敗しました。時間をおいて再度お試しください。");
+    } catch (error: unknown) {
+      const message = getErrorMessage(error);
+      setErr(
+        message || "メール送信に失敗しました。時間をおいて再度お試しください。"
+      );
     } finally {
       setSending(false);
     }

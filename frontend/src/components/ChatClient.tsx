@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { auth } from "@/lib/firebase";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { callCoach } from "@/lib/api";
+import { getErrorMessage } from "@/lib/errors";
 
 type Msg = { role: "user" | "assistant"; content: string };
 
@@ -37,10 +38,11 @@ export default function ChatClient() {
       const idToken = tokenRef.current!;
       const reply = await callCoach({ message: msg }, idToken);
       setMessages((m) => [...m, { role: "assistant", content: reply }]);
-    } catch (e: any) {
+    } catch (error: unknown) {
+      const message = getErrorMessage(error);
       setMessages((m) => [
         ...m,
-        { role: "assistant", content: `エラー: ${e.message ?? e}` },
+        { role: "assistant", content: `エラー: ${message}` },
       ]);
     } finally {
       setLoading(false);

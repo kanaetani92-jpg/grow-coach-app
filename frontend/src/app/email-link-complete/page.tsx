@@ -8,6 +8,7 @@ import {
   onAuthStateChanged,
 } from "firebase/auth";
 import { createSession } from "@/lib/api";
+import { getErrorMessage } from "@/lib/errors";
 
 export default function EmailLinkComplete() {
   const [status, setStatus] = useState("処理中...");
@@ -45,8 +46,8 @@ export default function EmailLinkComplete() {
           unsub();
           window.location.replace("/");
         });
-      } catch (e: any) {
-        setStatus(`エラー: ${e.message ?? e}`);
+      } catch (error: unknown) {
+        setStatus(`エラー: ${getErrorMessage(error)}`);
       }
     };
     run();
