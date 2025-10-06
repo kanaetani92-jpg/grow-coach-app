@@ -3,7 +3,7 @@ import { URL } from "url";
 import { existsSync, readFileSync } from "fs";
 import { resolve } from "path";
 
-import { verifyBearerToken } from "./auth";
+import { verifyBearer, getUidFromAuthHeader } from "./auth.js";
 import { db } from "./db.js";
 
 type Msg = { role: "user" | "coach"; content: string; createdAt: number };
@@ -196,7 +196,7 @@ function requireAuth(
 ): RouteHandler {
   return async context => {
     try {
-      const uid = await verifyBearerToken(context.req.headers.authorization);
+      const uid = await getUidFromAuthHeader(context.req.headers.authorization);
       await handler({ ...context, uid });
     } catch (error) {
       if (error instanceof Error && error.message === "missing bearer token") {
