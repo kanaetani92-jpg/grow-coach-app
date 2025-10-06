@@ -1,29 +1,19 @@
 steps:
-  # 1) backend の Docker イメージをビルド
   - name: 'gcr.io/cloud-builders/docker'
-    dir: 'backend'                             # ★ここを追加
-    args: ['build', '-t', '${_IMAGE}:$SHORT_SHA', '.']
-
-  # 2) Artifact Registry へ push
+    dir: 'backend'  # ← ここが重要（Dockerfile は backend/ にある）
+    args: ['build','-t','${_IMAGE}:$SHORT_SHA','-f','Dockerfile','.']
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', '${_IMAGE}:$SHORT_SHA']
-
-  # 3) Cloud Run へデプロイ
+    args: ['push','${_IMAGE}:$SHORT_SHA']
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
-    args:
-      - run
-      - deploy
-      - '${_SERVICE}'
-      - '--image=${_IMAGE}:$SHORT_SHA'
-      - '--region=${_REGION}'
-      - '--platform=managed'
-      - '--allow-unauthenticated'
-      - '--set-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest'
-
+    args: ['run','deploy','${_SERVICE}','--image=${_IMAGE}:$SHORT_SHA',
+           '--region=${_REGION}','--platform=managed','--allow-unauthenticated',
+           '--set-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest']
 images:
   - '${_IMAGE}:$SHORT_SHA'
 substitutions:
   _REGION: 'asia-northeast1'
   _SERVICE: 'grow-backend'
   _IMAGE: '${_REGION}-docker.pkg.dev/$PROJECT_ID/containers/grow-backend'
+options:
+  logging: CLOUD_LOGGING_ONLY
