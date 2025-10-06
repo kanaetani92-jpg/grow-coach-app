@@ -1,12 +1,26 @@
+import type { Request, Response, NextFunction } from "express";
+import { initializeApp, applicationDefault } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
-import { firebaseApp } from "./firebase.js";
 
-const auth = getAuth(firebaseApp);
+// 初期化（Cloud Run では ADC を利用）
+initializeApp({ credential: applicationDefault() });
 
-export async function verifyBearerToken(authorization?: string): Promise<string> {
-  const header = authorization ?? "";
-  const match = header.match(/^Bearer\s+(.+)$/i);
-  if (!match || !match[1]) throw new Error("missing bearer token");
-
-  const decoded = await auth.verifyIdToken(match[1]);
-  return decoded.uid;
+export async function verifyBearer(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  const header = req.headers.authorization || "";
+  const m = header.match(/^Bearer (.+)$/i);
+  if (!m) {
+    res.status(401).json({ error: "missing bearer token" });
+    return;
+  }
+  try {
+    const decoded = await getAuth().verifyIdToken(m[1]);
+    (req as any).uid = decoded.uid;
+    next();
+  } catch (err) {
+    res.status(401).json({ error: "invalid token" });
+  }
+}
