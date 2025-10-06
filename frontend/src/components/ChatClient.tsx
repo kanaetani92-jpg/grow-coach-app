@@ -47,7 +47,7 @@ export default function ChatClient() {
     }
 
     // ← 2つ目の引数に idToken を渡す
-    const reply = await callCoach(input.trim(), idToken);
+    const reply = await callCoach({ message: input.trim() }, idToken);
 
     setMessages((m) => [...m, { role: "assistant", content: reply }]);
   } finally {
