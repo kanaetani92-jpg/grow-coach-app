@@ -32,18 +32,29 @@ export default function ChatClient() {
   }
 
   async function handleSend() {
-    if (!input.trim()) return;
-    const userMsg: ChatMsg = { role: "user", content: input.trim() };
-    setMessages((m) => [...m, userMsg]);
-    setInput("");
-    setLoading(true);
-    try {
-      const reply = await callCoach(input.trim()); // `/api/coach` 叩く
-      setMessages((m) => [...m, { role: "assistant", content: reply }]);
-    } finally {
-      setLoading(false);
+  if (!input.trim()) return;
+
+  const userMsg: ChatMsg = { role: "user", content: input.trim() };
+  setMessages((m) => [...m, userMsg]);
+  setInput("");
+  setLoading(true);
+
+  try {
+    // ← ここを追加：現在ログイン中ユーザーの ID トークンを取得
+    const idToken = await auth.currentUser?.getIdToken();
+    if (!idToken) {
+      throw new Error("Not signed in");
     }
+
+    // ← 2つ目の引数に idToken を渡す
+    const reply = await callCoach(input.trim(), idToken);
+
+    setMessages((m) => [...m, { role: "assistant", content: reply }]);
+  } finally {
+    setLoading(false);
   }
+}
+
 
   return (
     <div className="space-y-4">
