@@ -106,3 +106,29 @@ app.get("/api/history", async (req, res) => {
   const items = snap.docs.map(d => d.data());
   res.json({ messages: items });
 });
+import express from "express";
+import cors from "cors";
+import { verifyBearer } from "./auth";
+import { db } from "./db"; // Firestore 初期化済み
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+app.get("/health", (_, res) => res.send("ok"));
+
+// セッション作成/履歴取得/コーチAPI を認証保護
+app.post("/api/sessions", verifyBearer, async (req, res) => {
+  const uid = (req as any).uid as string;
+  // ... uid を使って Firestore にセッション作成 ...
+});
+
+app.post("/api/coach", verifyBearer, async (req, res) => {
+  const uid = (req as any).uid as string;
+  // ... ここで uid を使って保存・応答 ...
+});
+
+app.get("/api/history", verifyBearer, async (req, res) => {
+  const uid = (req as any).uid as string;
+  // ... uid & sessionId で履歴取得 ...
+});
