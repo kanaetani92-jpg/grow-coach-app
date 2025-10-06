@@ -28,6 +28,24 @@ export default function Home() {
       setSessionId(j.sessionId);
     })();
   }, []);
+// 既存の useEffect（/api/sessions 作成）の前でも後でもOK
+useEffect(() => {
+  const uid = localStorage.getItem("uid") ?? crypto.randomUUID();
+  localStorage.setItem("uid", uid);
+}, []);
+// セッション確定後に履歴を取得
+useEffect(() => {
+  const uid = localStorage.getItem("uid");
+  if (!uid || !sessionId) return;
+
+  (async () => {
+    const r = await fetch(
+      `${process.env.NEXT_PUBLIC_API_BASE}/api/history?uid=${uid}&sessionId=${sessionId}`
+    );
+    const j = await r.json();
+    setHistory(j.messages as Msg[]);
+  })();
+}, [sessionId]);
 
   useEffect(() => {
     areaRef.current?.scrollTo({ top: areaRef.current.scrollHeight, behavior: "smooth" });

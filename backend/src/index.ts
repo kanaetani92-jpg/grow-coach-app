@@ -64,3 +64,45 @@ app.post("/api/coach", async (req, res) => {
 });
 
 app.listen(PORT, "0.0.0.0", () => console.log(`listening on ${PORT}`));
+import { db } from "./db";
+
+// セッション作成
+app.post("/api/sessions", async (req, res) => {
+  const uid = (req.body?.uid as string) || "anon";
+  const id = Math.random().toString(36).slice(2);
+  memory[id] = [];
+  // Firestore: セッションメタを作成
+  await db.collection("users").doc(uid)
+    .collection("sessions").doc(id).set({
+      createdAt: Date.now(), stage: "G"
+    }, { merge: true });
+  res.json({ sessionId: id, stage: "G" });
+});
+
+// コーチ応答（保存付き）
+app.post("/api/coach", async (req, res) => {
+  const { sessionId, userText, uid = "anon" } = req.body;
+  // ... Gemini 応答を得る現行処理 ...
+
+  // Firestore に append（サブコレクション messages）
+  const ref = db.collection("users").doc(uid)
+    .collection("sessions").doc(sessionId);
+  const batch = db.batch();
+  const msgs = ref.collection("messages");
+  batch.set(msgs.doc(), { role: "user", content: userText, createdAt: Date.now() });
+  batch.set(msgs.doc(), { role: "coach", content: payload.message, createdAt: Date.now() });
+  batch.set(ref, { stage: payload.stage, updatedAt: Date.now() }, { merge: true });
+  await batch.commit();
+
+  res.json(payload);
+});
+
+// 履歴取得（新規）
+app.get("/api/history", async (req, res) => {
+  const { uid, sessionId } = req.query as { uid: string; sessionId: string };
+  const snap = await db.collection("users").doc(uid)
+    .collection("sessions").doc(sessionId)
+    .collection("messages").orderBy("createdAt", "asc").get();
+  const items = snap.docs.map(d => d.data());
+  res.json({ messages: items });
+});
