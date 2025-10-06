@@ -1,5 +1,4 @@
-import { initializeApp, applicationDefault } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
+import { firebaseApp } from "./firebase.js";
 
-const app = initializeApp({ credential: applicationDefault() });
-export const db = getFirestore(app);
+export const db = getFirestore(firebaseApp);
