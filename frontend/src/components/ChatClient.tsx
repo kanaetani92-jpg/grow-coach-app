@@ -1,7 +1,12 @@
 "use client";
+
 import { useEffect, useState } from "react";
-import { getAuth, onAuthStateChanged } from "firebase/auth";
+import { onAuthStateChanged, signInWithPopup } from "firebase/auth";
+import { auth, googleProvider } from "@/lib/firebase";
 import { createSession, callCoach } from "@/lib/api";
+
+// ... 以降は今の実装でOK（onAuthStateChanged 内で idToken→createSession）
+
 
 export default function ChatClient() {
   const [stage, setStage] = useState<"G" | "R" | "O" | "W">("G");
