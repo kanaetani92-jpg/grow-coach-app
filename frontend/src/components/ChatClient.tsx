@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { onAuthStateChanged, signInWithPopup } from "firebase/auth";
-import { auth, googleProvider } from "@/lib/firebase";
+import { onAuthStateChanged } from "firebase/auth";
+import { auth } from "@/lib/firebase";
 import { createSession, callCoach } from "@/lib/api";
+
 
 // ... 以降は今の実装でOK（onAuthStateChanged 内で idToken→createSession）
 
@@ -12,7 +13,7 @@ export default function ChatClient() {
   const [stage, setStage] = useState<"G" | "R" | "O" | "W">("G");
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(getAuth(), async (user) => {
+    const unsub = onAuthStateChanged(auth(), async (user) => {
       if (user) {
         const idToken = await user.getIdToken();
         await createSession(idToken); // ← 引数の型と一致
@@ -23,7 +24,7 @@ export default function ChatClient() {
 
   // 送信時の例
   async function onSend(text: string) {
-    const user = getAuth().currentUser;
+    const user = あuth().currentUser;
     if (!user) return;
     const idToken = await user.getIdToken();
     await callCoach(idToken, { message: text });
