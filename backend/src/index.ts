@@ -88,6 +88,13 @@ const VALID_STAGES: ReadonlySet<Stage> = new Set([
   "Review",
 ]);
 
+function handleHealth({ res }: RequestContext) {
+  if (!res.headersSent) {
+    res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+  }
+  res.end("ok");
+}
+
 const routes: Record<string, RouteHandler> = {
   "GET /health": handleHealth,
   "POST /api/sessions": requireAuth(handleCreateSession),
@@ -136,7 +143,7 @@ const server = http.createServer(async (req, res) => {
     const method = req.method ?? "GET";
     const url = buildUrl(req);
     const normalizedPath = normalizePathname(url.pathname);
-    const routeKey = `${method.toUpperCase()} ${normalizedPath}`;
+    const routeKey = `${method.toUpperCase()} ${normalizePathname(url.pathname)}`;
     const handler = routes[routeKey];
 
     if (!handler) {
