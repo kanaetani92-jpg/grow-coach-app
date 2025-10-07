@@ -9,14 +9,17 @@ import { db } from "./db.js";
 
 loadEnvFile();
 
+type Stage = "G" | "R" | "O" | "W" | "Wrap" | "Review";
+
 type Msg = {
   role: "user" | "coach";
   content: string;
   createdAt: number;
-  stage?: string;
+  stage?: Stage;
   next_fields?: string[];
 };
-type SessionCache = { messages: Msg[]; stage?: string };
+type SessionCache = { messages: Msg[]; stage?: Stage };
+type CoachPayload = { stage: Stage; message: string; next_fields: string[] };
 
 type RouteHandler = (context: RequestContext) => Promise<void> | void;
 
@@ -41,7 +44,9 @@ type FetchFn = (
   input: string,
   init?: {
     method?: string;
-@@ -285,63 +291,75 @@ async function handleCoach(context: RequestContext & { uid: string }) {
+    headers?: Record<string, string>;
+    body?: string;
+  }
 ) => Promise<FetchResponse>;
 
 const globalFetch = (globalThis as { fetch?: FetchFn }).fetch;
@@ -74,6 +79,15 @@ const systemPrompt = `
 Wrap-up/Reviewまでが1サイクル。行動は「言い切り文＋測定＋ハードル対策」。
 出力は JSON で {stage, message, next_fields} のみ。一度の質問は最大3つ。
 `;
+
+const VALID_STAGES: ReadonlySet<Stage> = new Set([
+  "G",
+  "R",
+  "O",
+  "W",
+  "Wrap",
+  "Review",
+]);
 
 const routes: Record<string, RouteHandler> = {
   "GET /health": handleHealth,
@@ -243,7 +257,7 @@ function handleHealth({ res }: RequestContext) {
 async function handleCreateSession({ uid, res }: RequestContext & { uid: string }) {
   const sessionId = randomBytes(16).toString("hex");
   const now = Date.now();
-  const stage = "G";
+  const stage: Stage = "G";
 
   memory.set(sessionId, { messages: [], stage });
 
@@ -336,7 +350,7 @@ async function handleCoach(context: RequestContext & { uid: string }) {
       stage: payload.stage,
       next_fields: payload.next_fields,
     });
-    batch.set(ref, { stage: payload.stage, updatedAt: coachTimestamp }, { merge: true });
+     batch.set(ref, { stage: payload.stage, updatedAt: coachTimestamp }, { merge: true });
     await batch.commit();
 
     log("info", "coach_response", {
@@ -361,7 +375,17 @@ async function handleHistory(context: RequestContext & { uid: string }) {
   const { uid, res, query } = context;
   const sessionId = query["sessionId"];
   if (!sessionId) {
-@@ -359,65 +377,81 @@ async function handleHistory(context: RequestContext & { uid: string }) {
+    sendJson(res, 400, { error: "missing sessionId" });
+    return;
+  }
+
+  try {
+    const history = await loadHistory(uid, sessionId);
+    sendJson(res, 200, history);
+  } catch (error) {
+    log("error", "failed_to_fetch_history", {
+      uid,
+      sessionId,
       error: serializeError(error),
     });
     sendJson(res, 500, { error: "failed to fetch history" });
@@ -401,7 +425,7 @@ async function loadHistory(uid: string, sessionId: string): Promise<SessionCache
       return acc;
     }
 
-    const stage = typeof data.stage === "string" ? data.stage : undefined;
+    const stage = parseStage(data.stage);
     const nextFieldsRaw = data.next_fields;
     const nextFields = Array.isArray(nextFieldsRaw)
       ? nextFieldsRaw.filter((item): item is string => typeof item === "string")
@@ -420,12 +444,26 @@ async function loadHistory(uid: string, sessionId: string): Promise<SessionCache
 
   const result: SessionCache = {
     messages: items,
-    stage: typeof sessionData.stage === "string" ? sessionData.stage : undefined,
+    stage: parseStage(sessionData.stage),
   };
 
   memory.set(sessionId, result);
   return result;
 }
+
+type GeminiResponse = {
+  candidates?: Array<{
+    content?: {
+      parts?: Array<{
+        text?: string;
+      }>;
+    };
+    finishReason?: string;
+  }>;
+  promptFeedback?: {
+    blockReason?: string;
+  };
+};
 
 async function generateGeminiContent(parts: Array<{ text: string }>): Promise<string> {
   const response = await fetchFn(
@@ -439,12 +477,42 @@ async function generateGeminiContent(parts: Array<{ text: string }>): Promise<st
     }
   );
 
+  const raw = await response.text();
+
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Gemini API error: ${response.status} ${text}`);
+    throw new Error(`Gemini API error: ${response.status} ${raw}`);
   }
 
-  return { stage: "R", message: text, next_fields: [] };
+  let data: GeminiResponse;
+  try {
+    data = raw ? (JSON.parse(raw) as GeminiResponse) : {};
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Gemini API returned invalid JSON: ${message}`);
+  }
+
+  if (data.promptFeedback?.blockReason) {
+    throw new Error(`Gemini API blocked the request: ${data.promptFeedback.blockReason}`);
+  }
+
+  const candidate = data.candidates?.find((item) => {
+    const parts = item.content?.parts ?? [];
+    return parts.some((part) => typeof part.text === "string" && part.text.trim().length > 0);
+  });
+
+  if (!candidate) {
+    throw new Error("Gemini API returned no usable candidates");
+  }
+
+  const part = candidate.content?.parts?.find(
+    (item): item is { text: string } => typeof item?.text === "string" && item.text.trim().length > 0
+  );
+
+  if (!part) {
+    throw new Error("Gemini API candidate is missing text content");
+  }
+
+  return part.text.trim();
 }
 
 function getStringField(body: unknown, key: string): string | undefined {
@@ -463,6 +531,42 @@ function sanitizeUserText(value: string): string {
     return "";
   }
   return trimmed;
+}
+
+function parseCoachPayload(text: string): CoachPayload {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Gemini output is not valid JSON: ${message}`);
+  }
+
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("Gemini output is not an object");
+  }
+
+  const record = parsed as Record<string, unknown>;
+  const stage = parseStage(record.stage);
+  if (!stage) {
+    throw new Error("Gemini output stage is invalid");
+  }
+
+  const messageRaw = record.message;
+  const message = typeof messageRaw === "string" ? messageRaw.trim() : "";
+  if (!message) {
+    throw new Error("Gemini output message is empty");
+  }
+
+  const nextRaw = record.next_fields;
+  const nextFields = Array.isArray(nextRaw)
+    ? nextRaw
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0)
+    : [];
+
+  return { stage, message, next_fields: nextFields };
 }
 
 function parseAllowedOrigins(input: string): string[] {
@@ -490,33 +594,7 @@ function getClientIp(req: http.IncomingMessage): string {
     return forwarded.split(",")[0]!.trim();
   }
   if (Array.isArray(forwarded) && forwarded.length > 0) {
-    return forwarded[0]!.trim();
-  }
-  return req.socket.remoteAddress ?? "unknown";
-}
-
-function enforceRateLimit(req: http.IncomingMessage, res: http.ServerResponse): boolean {
-  if (RATE_LIMIT_MAX <= 0) return true;
-
-  const ip = getClientIp(req);
-  const route = req.url ? req.url.split("?")[0] ?? "" : "";
-  const key = `${ip}:${route}`;
-  const now = Date.now();
-  const entry = rateLimitState.get(key);
-  if (!entry || now > entry.expiresAt) {
-    rateLimitState.set(key, { count: 1, expiresAt: now + RATE_LIMIT_WINDOW_MS });
-    return true;
-  }
-
-  entry.count += 1;
-  if (entry.count > RATE_LIMIT_MAX) {
-    log("warn", "rate_limited", { ip, route });
-    sendJson(res, 429, { error: "too many requests" });
-    return false;
-  }
-  return true;
-}
-
+@@ -520,26 +624,33 @@ function enforceRateLimit(req: http.IncomingMessage, res: http.ServerResponse):
 function log(level: "info" | "warn" | "error", message: string, meta: Record<string, unknown> = {}) {
   const payload = {
     level,
@@ -542,4 +620,11 @@ function serializeError(error: unknown): Record<string, unknown> {
     return error as Record<string, unknown>;
   }
   return { value: String(error) };
+}
+
+function parseStage(value: unknown): Stage | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  return VALID_STAGES.has(value as Stage) ? (value as Stage) : undefined;
 }
