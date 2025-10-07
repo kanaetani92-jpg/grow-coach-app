@@ -93,7 +93,15 @@ type CoachResponse = {
 
 type HistoryMessage = {
   role: string;
-@@ -99,30 +105,31 @@ type HistoryResponse = {
+  content: string;
+  createdAt: number;
+  stage?: string;
+  next_fields?: string[];
+};
+
+type HistoryResponse = {
+  messages: HistoryMessage[];
+  stage?: string;
 };
 
 export async function createSession(idToken: string): Promise<SessionResponse> {

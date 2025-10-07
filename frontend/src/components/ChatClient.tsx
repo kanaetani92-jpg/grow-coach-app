@@ -267,74 +267,120 @@ export default function ChatClient() {
   }
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <span className="font-semibold">ログイン済み</span>
-        <button className="text-sm underline" onClick={() => signOut(auth)}>
-          サインアウト
-        </button>
-      </div>
-      <div className="text-xs text-gray-600 space-y-1">
-        {sessionId && <p>セッションID: {sessionId}</p>}
-        {stage && <p>現在のステージ: {stage}</p>}
-      </div>
+    <div className="flex h-[34rem] flex-col overflow-hidden rounded-[32px] border border-[#d1d7db] bg-[#f0f2f5] shadow-2xl shadow-black/30">
+      <header className="bg-[#075e54] px-6 py-4 text-white shadow">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-lg font-semibold">Grow Coach</p>
+            <p className="text-xs text-white/70">コーチと会話を続けましょう</p>
+          </div>
+          <button
+            className="rounded-full bg-white/15 px-4 py-2 text-xs font-medium tracking-wide text-white transition hover:bg-white/25"
+            onClick={() => signOut(auth)}
+          >
+            サインアウト
+          </button>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] uppercase tracking-[0.2em] text-white/60">
+          <span>ログイン済み</span>
+          {stage && <span>Stage: {stage}</span>}
+          {sessionId && <span>ID: {sessionId}</span>}
+        </div>
+      </header>
 
-      <div
-        ref={scrollRef}
-        className="h-64 space-y-2 overflow-auto rounded border bg-white/60 p-3"
-      >
-        {messages.length === 0 ? (
-          <p className="text-sm text-gray-600">
-            {restoring ? "会話履歴を読み込んでいます..." : "コーチに聞きたいことを入力してみましょう。"}
-          </p>
-        ) : (
-          <ul className="space-y-2">
-            {messages.map((message, index) => (
-              <li
-                key={`${message.role}-${index}`}
-                className={
-                  message.role === "user"
-                    ? "flex justify-end"
-                    : "flex justify-start"
-                }
-              >
-                <span
+      <div className="flex flex-1 flex-col bg-[#f0f2f5]">
+        <div
+          ref={scrollRef}
+          className="chat-pattern flex-1 space-y-3 overflow-y-auto px-4 py-5"
+        >
+          {messages.length === 0 ? (
+            <div className="flex h-full items-center justify-center">
+              <p className="rounded-full bg-white/80 px-4 py-2 text-sm text-[#54656f] shadow">
+                {restoring
+                  ? "会話履歴を読み込んでいます..."
+                  : "コーチに聞きたいことを入力してみましょう。"}
+              </p>
+            </div>
+          ) : (
+            <ul className="space-y-3">
+              {messages.map((message, index) => (
+                <li
+                  key={`${message.role}-${index}`}
                   className={
                     message.role === "user"
-                      ? "inline-block max-w-[80%] rounded-lg bg-black px-3 py-2 text-sm text-white"
-                      : "inline-block max-w-[80%] rounded-lg bg-white px-3 py-2 text-sm text-gray-800 shadow whitespace-pre-wrap"
+                      ? "flex justify-end"
+                      : "flex justify-start"
                   }
                 >
-                  {message.content}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+                  <span
+                    className={`relative inline-block max-w-[80%] rounded-lg px-3 py-2 text-sm leading-relaxed shadow-sm ${
+                      message.role === "user"
+                        ? "bg-[#d9fdd3] text-[#111b21]"
+                        : "bg-white text-[#111b21]"
+                    }`}
+                  >
+                    <span className="block whitespace-pre-wrap break-words">
+                      {message.content}
+                    </span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
 
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          onSend();
-        }}
-        className="flex gap-2"
-      >
-        <input
-          value={input}
-          onChange={(event) => setInput(event.target.value)}
-          className="flex-1 rounded border px-3 py-2"
-          placeholder="コーチへの質問を入力"
-          disabled={loading}
-        />
-        <button
-          type="submit"
-          disabled={loading || restoring || input.trim().length === 0}
-          className="rounded bg-black px-4 py-2 text-white disabled:opacity-60"
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            onSend();
+          }}
+          className="border-t border-[#d1d7db] bg-[#f0f2f5]/90 px-4 py-4 backdrop-blur"
         >
-          {loading ? "送信中..." : "送信"}
-        </button>
-      </form>
+          <div className="flex items-center gap-3">
+            <div className="flex-1 rounded-full border border-transparent bg-white px-4 py-3 text-sm text-[#111b21] shadow focus-within:border-[#00a884] focus-within:ring-2 focus-within:ring-[#00a884]/30">
+              <input
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                className="w-full bg-transparent placeholder:text-[#667781] focus:outline-none"
+                placeholder="メッセージを入力"
+                disabled={loading}
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={loading || restoring || input.trim().length === 0}
+              className="rounded-full bg-[#00a884] px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-[#00a884]/40 transition hover:bg-[#02926f] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {loading ? "送信中..." : "送信"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+type HistoryMessage = {
+  role: string;
+  content: string;
+  createdAt: number;
+  stage?: string;
+  next_fields?: string[];
+};
+
+function normalizeHistoryMessage(
+  message: HistoryMessage,
+  fallbackStage: string | null
+): Msg | null {
+  if (message.role === "user" && typeof message.content === "string") {
+    return { role: "user", content: message.content };
+  }
+
+  if (message.role === "coach" && typeof message.content === "string") {
+    const fields = Array.isArray(message.next_fields)
+      ? message.next_fields.filter((item): item is string => typeof item === "string")
+      : [];
+    const stage =
     </div>
   );
 }
