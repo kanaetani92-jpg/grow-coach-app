@@ -9,7 +9,13 @@ import { db } from "./db.js";
 
 loadEnvFile();
 
-type Msg = { role: "user" | "coach"; content: string; createdAt: number };
+type Msg = {
+  role: "user" | "coach";
+  content: string;
+  createdAt: number;
+  stage?: string;
+  next_fields?: string[];
+};
 type SessionCache = { messages: Msg[]; stage?: string };
 
 type RouteHandler = (context: RequestContext) => Promise<void> | void;
@@ -35,9 +41,7 @@ type FetchFn = (
   input: string,
   init?: {
     method?: string;
-    headers?: Record<string, string>;
-    body?: string;
-  }
+@@ -285,63 +291,75 @@ async function handleCoach(context: RequestContext & { uid: string }) {
 ) => Promise<FetchResponse>;
 
 const globalFetch = (globalThis as { fetch?: FetchFn }).fetch;
@@ -282,7 +286,7 @@ async function handleCoach(context: RequestContext & { uid: string }) {
   }
 
   const userText = sanitizeUserText(userTextField);
-  if (!userText) {
+   if (!userText) {
     sendJson(res, 400, { error: "invalid text" });
     return;
   }
@@ -307,7 +311,13 @@ async function handleCoach(context: RequestContext & { uid: string }) {
 
     const nextMessages = [...history.messages];
     nextMessages.push({ role: "user", content: userText, createdAt: userTimestamp });
-    nextMessages.push({ role: "coach", content: payload.message, createdAt: coachTimestamp });
+    nextMessages.push({
+      role: "coach",
+      content: payload.message,
+      createdAt: coachTimestamp,
+      stage: payload.stage,
+      next_fields: payload.next_fields,
+    });
     memory.set(sessionId, { messages: nextMessages, stage: payload.stage });
 
     const ref = db
@@ -319,7 +329,13 @@ async function handleCoach(context: RequestContext & { uid: string }) {
     const batch = db.batch();
     const messages = ref.collection("messages");
     batch.set(messages.doc(), { role: "user", content: userText, createdAt: userTimestamp });
-    batch.set(messages.doc(), { role: "coach", content: payload.message, createdAt: coachTimestamp });
+    batch.set(messages.doc(), {
+      role: "coach",
+      content: payload.message,
+      createdAt: coachTimestamp,
+      stage: payload.stage,
+      next_fields: payload.next_fields,
+    });
     batch.set(ref, { stage: payload.stage, updatedAt: coachTimestamp }, { merge: true });
     await batch.commit();
 
@@ -345,17 +361,7 @@ async function handleHistory(context: RequestContext & { uid: string }) {
   const { uid, res, query } = context;
   const sessionId = query["sessionId"];
   if (!sessionId) {
-    sendJson(res, 400, { error: "sessionId is required" });
-    return;
-  }
-
-  try {
-    const history = await loadHistory(uid, sessionId);
-    sendJson(res, 200, { messages: history.messages, stage: history.stage });
-  } catch (error) {
-    log("error", "failed_to_fetch_history", {
-      uid,
-      sessionId,
+@@ -359,65 +377,81 @@ async function handleHistory(context: RequestContext & { uid: string }) {
       error: serializeError(error),
     });
     sendJson(res, 500, { error: "failed to fetch history" });
@@ -381,20 +387,36 @@ async function loadHistory(uid: string, sessionId: string): Promise<SessionCache
     ? (sessionSnapshot.data() as Record<string, unknown>)
     : {};
 
-  const items: Msg[] = messagesSnapshot.docs
-    .map((doc) => doc.data() as Record<string, unknown>)
-    .map((data) => ({
-      role: data.role,
-      content: data.content,
-      createdAt: data.createdAt,
-    }))
-    .filter((data): data is Msg => {
-      return (
-        (data.role === "user" || data.role === "coach") &&
-        typeof data.content === "string" &&
-        typeof data.createdAt === "number"
-      );
+  const items = messagesSnapshot.docs.reduce<Msg[]>((acc, doc) => {
+    const data = doc.data() as Record<string, unknown>;
+    const role = data.role;
+    const content = data.content;
+    const createdAt = data.createdAt;
+
+    if (
+      (role !== "user" && role !== "coach") ||
+      typeof content !== "string" ||
+      typeof createdAt !== "number"
+    ) {
+      return acc;
+    }
+
+    const stage = typeof data.stage === "string" ? data.stage : undefined;
+    const nextFieldsRaw = data.next_fields;
+    const nextFields = Array.isArray(nextFieldsRaw)
+      ? nextFieldsRaw.filter((item): item is string => typeof item === "string")
+      : undefined;
+
+    acc.push({
+      role,
+      content,
+      createdAt,
+      stage,
+      next_fields: nextFields,
     });
+
+    return acc;
+  }, []);
 
   const result: SessionCache = {
     messages: items,
@@ -420,42 +442,6 @@ async function generateGeminiContent(parts: Array<{ text: string }>): Promise<st
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`Gemini API error: ${response.status} ${text}`);
-  }
-
-  const data = (await response.json()) as Record<string, unknown>;
-  const candidates = data["candidates"];
-  if (!Array.isArray(candidates) || candidates.length === 0) {
-    throw new Error("Gemini API returned no candidates");
-  }
-
-  const content = candidates[0]?.content as Record<string, unknown> | undefined;
-  const partsData = (content?.parts as Array<Record<string, unknown>> | undefined) ?? [];
-  const textPart = partsData.find((part) => typeof part?.text === "string");
-
-  const text = typeof textPart?.text === "string" ? textPart.text : undefined;
-  if (!text) throw new Error("Gemini response missing text");
-  return text;
-}
-
-function parseCoachPayload(text: string): {
-  stage: string;
-  message: string;
-  next_fields: string[];
-} {
-  try {
-    const data = JSON.parse(text) as Record<string, unknown>;
-    const stage = data["stage"];
-    const message = data["message"];
-    const nextFields = data["next_fields"];
-
-    if (typeof stage === "string" && typeof message === "string") {
-      const fields = Array.isArray(nextFields)
-        ? nextFields.filter((item): item is string => typeof item === "string")
-        : [];
-      return { stage, message, next_fields: fields };
-    }
-  } catch {
-    // ignore
   }
 
   return { stage: "R", message: text, next_fields: [] };

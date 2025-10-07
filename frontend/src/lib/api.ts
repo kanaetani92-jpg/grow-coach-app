@@ -59,6 +59,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     try {
       message = await res.text();
     } catch {
+      
       message = res.statusText;
     }
     throw new ApiError(message, res.status);
@@ -84,8 +85,16 @@ type CoachResponse = {
   next_fields: string[];
 };
 
+type HistoryMessage = {
+  role: string;
+  content: string;
+  createdAt: number;
+  stage?: string;
+  next_fields?: string[];
+};
+
 type HistoryResponse = {
-  messages: Array<{ role: string; content: string; createdAt: number }>;
+  messages: HistoryMessage[];
   stage?: string;
 };
 
@@ -111,10 +120,3 @@ export async function callCoach(
 export async function fetchHistory(
   sessionId: string,
   idToken: string
-): Promise<HistoryResponse> {
-  const params = new URLSearchParams({ sessionId });
-  return await request<HistoryResponse>(`/history?${params.toString()}`, {
-    method: "GET",
-    idToken,
-  });
-}
