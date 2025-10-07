@@ -46,15 +46,20 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 
     let res: Response;
   try {
-    res = await fetch(url, {
+    const init: RequestInit = {
       method,
       headers,
       body:
         body !== undefined && method !== "GET" && method !== "HEAD"
           ? JSON.stringify(body)
           : undefined,
-      credentials: "include",
-    });
+          };
+
+    if (isFallbackApiBase) {
+      init.credentials = "include";
+    }
+
+    res = await fetch(url, init);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     const connectionHelp = isFallbackApiBase
