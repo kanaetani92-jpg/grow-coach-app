@@ -15,7 +15,7 @@ const actionCodeSettings: ActionCodeSettings = {
 
 export default function EmailLinkForm() {
   const [email, setEmail] = useState("");
-    const [sending, setSending] = useState(false);
+  const [sending, setSending] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
