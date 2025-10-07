@@ -1,9 +1,18 @@
-+80
--62
-
 // API 呼び出しの共通ラッパー（Authorization: Bearer <idToken> を付与）
-const BASE_URL = (process.env.NEXT_PUBLIC_BACKEND_BASE_URL ?? "").replace(/\/$/, "");
-const API_PREFIX = "/api";
+// NOTE: 旧名称 `NEXT_PUBLIC_BACKEND_BASE_URL` との互換性を維持するため、
+//       `NEXT_PUBLIC_BACKEND_URL` と両方の環境変数を参照する。
+const rawBaseUrl =
+  process.env.NEXT_PUBLIC_BACKEND_BASE_URL ??
+  process.env.NEXT_PUBLIC_BACKEND_URL ??
+  "";
+
+const trimmedBaseUrl = rawBaseUrl.replace(/\/$/, "");
+const apiBase =
+  trimmedBaseUrl === ""
+    ? "/api"
+    : trimmedBaseUrl.endsWith("/api")
+      ? trimmedBaseUrl
+      : `${trimmedBaseUrl}/api`;
 
 export class ApiError extends Error {
   readonly status: number;
@@ -33,7 +42,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   }
 
   const urlPath = path.startsWith("/") ? path : `/${path}`;
-  const url = `${BASE_URL}${API_PREFIX}${urlPath}`;
+  const url = `${apiBase}${urlPath.startsWith("/") ? "" : "/"}${urlPath}`;
 
   const res = await fetch(url, {
     method,
