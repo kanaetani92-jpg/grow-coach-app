@@ -17,7 +17,7 @@ export default function ChatClient() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [restoring, setRestoring] = useState(false);
-    const tokenRef = useRef<string | null>(null);
+  const tokenRef = useRef<string | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -79,10 +79,35 @@ export default function ChatClient() {
     }
   }, [messages]);
 
+  useEffect(() => {
+    if (!authed || !sessionId) {
+      return;
+    }
+
+    let canceled = false;
+
+    const restore = async () => {
+      setRestoring(true);
+
       const fetchWithToken = async (token: string) =>
         await fetchHistory(sessionId, token);
 
       try {
+        const user = auth.currentUser;
+        if (!user) {
+          throw new Error("ログイン情報を取得できませんでした。");
+        }
+
+        let initialToken = tokenRef.current;
+        if (!initialToken) {
+          initialToken = await user.getIdToken();
+          tokenRef.current = initialToken;
+        }
+
+        if (!initialToken) {
+          throw new Error("ログイン情報を取得できませんでした。");
+        }
+
         let token = initialToken;
         const history = await fetchWithToken(token).catch(async (error) => {
           if (error instanceof ApiError && error.status === 401 && auth.currentUser) {
@@ -107,40 +132,6 @@ export default function ChatClient() {
         }
       } catch (error) {
         if (canceled) return;
-
-        if (error instanceof ApiError && error.status === 404) {
-          window.localStorage.removeItem("currentSessionId");
-          window.localStorage.removeItem("currentSessionStage");
-          setSessionId(null);
-          setStage(null);
-
-          const ensureSession = async () => {
-            const user = auth.currentUser;
-            if (!user) {
-              throw new Error("ログイン情報を取得できませんでした。");
-            }
-
-            let token = tokenRef.current ?? (await user.getIdToken());
-
-            const createWithToken = async (value: string) => await createSession(value);
-
-            try {
-              const session = await createWithToken(token);
-              tokenRef.current = token;
-              return session;
-            } catch (creationError) {
-              if (creationError instanceof ApiError && creationError.status === 401) {
-                token = await user.getIdToken(true);
-                tokenRef.current = token;
-                return await createWithToken(token);
-              }
-              throw creationError;
-            }
-          };
-
-          try {
-            const session = await ensureSession();
-            if (canceled) return;
 
             setSessionId(session.sessionId);
             setStage(session.stage);
