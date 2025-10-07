@@ -19,7 +19,7 @@ pnpm dev
 | `NEXT_PUBLIC_FIREBASE_API_KEY` | Firebase Web API Key |
 | `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | Firebase Auth ドメイン (例: `your-project.firebaseapp.com`) |
 | `NEXT_PUBLIC_FIREBASE_PROJECT_ID` | Firebase プロジェクト ID |
-| `NEXT_PUBLIC_BACKEND_URL` | バックエンド API のベース URL。末尾が `/api` でない場合は自動的に付与されます。旧名称の `NEXT_PUBLIC_BACKEND_BASE_URL` も利用できます。|
+| `NEXT_PUBLIC_BACKEND_URL` | バックエンド API のベース URL。末尾が `/api` でない場合は自動的に付与されます。旧名称の `NEXT_PUBLIC_BACKEND_BASE_URL` も利用できます。未設定のままだとフロントエンドは Next.js の `/api` プレースホルダーにアクセスし、`405 Method Not Allowed` が発生します。|
 | `NEXT_PUBLIC_APP_ORIGIN` | メールリンクで使用するアプリ公開 URL (開発環境では `http://localhost:3000`) |
 | `NEXT_PUBLIC_LOG_ENDPOINT` (任意) | 追加のログ送信先エンドポイント |
 

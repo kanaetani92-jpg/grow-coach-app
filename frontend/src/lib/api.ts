@@ -7,10 +7,10 @@ const rawBaseUrl =
   "";
 
 const trimmedBaseUrl = rawBaseUrl.replace(/\/$/, "");
-const apiBase =
-  trimmedBaseUrl === ""
-    ? "/api"
-    : trimmedBaseUrl.endsWith("/api")
+const isFallbackApiBase = trimmedBaseUrl === "";
+const apiBase = isFallbackApiBase
+  ? "/api"
+  : trimmedBaseUrl.endsWith("/api")
       ? trimmedBaseUrl
       : `${trimmedBaseUrl}/api`;
 
@@ -59,9 +59,15 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     try {
       message = await res.text();
     } catch {
-      
       message = res.statusText;
     }
+
+    if (isFallbackApiBase && (res.status === 404 || res.status === 405)) {
+      message =
+        "バックエンド API のベース URL が設定されていないため、Next.js の `/api` プレースホルダーにアクセスして 404/405 が返却されました。" +
+        " `NEXT_PUBLIC_BACKEND_URL` (または `NEXT_PUBLIC_BACKEND_BASE_URL`) を設定して、正しいバックエンドにリクエストが送られるようにしてください。";
+    }
+
     throw new ApiError(message, res.status);
   }
 
@@ -87,15 +93,7 @@ type CoachResponse = {
 
 type HistoryMessage = {
   role: string;
-  content: string;
-  createdAt: number;
-  stage?: string;
-  next_fields?: string[];
-};
-
-type HistoryResponse = {
-  messages: HistoryMessage[];
-  stage?: string;
+@@ -99,30 +105,31 @@ type HistoryResponse = {
 };
 
 export async function createSession(idToken: string): Promise<SessionResponse> {
@@ -121,7 +119,8 @@ export async function fetchHistory(
   sessionId: string,
   idToken: string
 ): Promise<HistoryResponse> {
-  return await request<HistoryResponse>(`/sessions/${sessionId}/history`, {
+  const query = new URLSearchParams({ sessionId }).toString();
+  return await request<HistoryResponse>(`/history?${query}`, {
     method: "GET",
     idToken,
   });
