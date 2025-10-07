@@ -120,3 +120,9 @@ export async function callCoach(
 export async function fetchHistory(
   sessionId: string,
   idToken: string
+): Promise<HistoryResponse> {
+  return await request<HistoryResponse>(`/sessions/${sessionId}/history`, {
+    method: "GET",
+    idToken,
+  });
+}

@@ -17,7 +17,7 @@ export default function ChatClient() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [restoring, setRestoring] = useState(false);
-  const tokenRef = useRef<string | null>(null);
+    const tokenRef = useRef<string | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -42,7 +42,18 @@ export default function ChatClient() {
       }
 
       try {
-@@ -44,153 +46,316 @@ export default function ChatClient() {
+        let token = idToken;
+        const createWithToken = (value: string) => createSession(value);
+
+        const session = await createWithToken(token).catch(async (error) => {
+          if (error instanceof ApiError && error.status === 401 && auth.currentUser) {
+            token = await auth.currentUser.getIdToken(true);
+            tokenRef.current = token;
+            return await createWithToken(token);
+          }
+          throw error;
+        });
+
         setSessionId(session.sessionId);
         setStage(session.stage);
         window.localStorage.setItem("currentSessionId", session.sessionId);
@@ -67,16 +78,6 @@ export default function ChatClient() {
       el.scrollTop = el.scrollHeight;
     }
   }, [messages]);
-
-  useEffect(() => {
-    if (!authed || !sessionId) return;
-    const initialToken = tokenRef.current;
-    if (!initialToken) return;
-
-    let canceled = false;
-
-    const restore = async () => {
-      setRestoring(true);
 
       const fetchWithToken = async (token: string) =>
         await fetchHistory(sessionId, token);
@@ -274,13 +275,13 @@ export default function ChatClient() {
               >
                 <span
                   className={
-                  message.role === "user"
-                    ? "inline-block max-w-[80%] rounded-lg bg-black px-3 py-2 text-sm text-white"
-                    : "inline-block max-w-[80%] rounded-lg bg-white px-3 py-2 text-sm text-gray-800 shadow whitespace-pre-wrap"
-              }
-            >
-              {message.content}
-            </span>
+                    message.role === "user"
+                      ? "inline-block max-w-[80%] rounded-lg bg-black px-3 py-2 text-sm text-white"
+                      : "inline-block max-w-[80%] rounded-lg bg-white px-3 py-2 text-sm text-gray-800 shadow whitespace-pre-wrap"
+                  }
+                >
+                  {message.content}
+                </span>
               </li>
             ))}
           </ul>
