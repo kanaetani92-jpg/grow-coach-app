@@ -8,7 +8,6 @@ import { getUidFromAuthHeader } from "./auth.js";
 import { db } from "./db.js";
 
 loadEnvFile();
-
 type Stage = "G" | "R" | "O" | "W" | "Wrap" | "Review";
 
 type Msg = {
@@ -589,18 +588,30 @@ function resolveAllowedOrigin(origin: string, origins: string[]): string {
 }
 
 function getClientIp(req: http.IncomingMessage): string {
-  const forwarded = req.headers["x-forwarded-for"];
-  if (typeof forwarded === "string" && forwarded.length > 0) {
-    return forwarded.split(",")[0]!.trim();
+  const xf = req.headers["x-forwarded-for"];
+  // 文字列 "ip1, ip2, ..." のケース
+  if (typeof xf === "string" && xf.length > 0) {
+    const forwarded = xf.split(",").map(s => s.trim()).filter(Boolean);
+    if (forwarded.length > 0) return forwarded[0];
   }
-  if (Array.isArray(forwarded) && forwarded.length > 0) {
-function log(level: "info" | "warn" | "error", message: string, meta: Record<string, unknown> = {}) {
-  const payload = {
-    level,
-    message,
-    timestamp: new Date().toISOString(),
-    ...meta,
-  };
+  // string[] のケース
+  if (Array.isArray(xf) && xf.length > 0) {
+    return (xf[0] ?? "").trim();
+  }
+  // それ以外はソケットのアドレス
+  const ra = req.socket?.remoteAddress ?? "";
+  // IPv4-mapped IPv6 を見やすく
+  return ra.replace(/^::ffff:/, "");
+}
+type LogLevel = "info" | "warn" | "error";
+function log(level: LogLevel, message: string, meta: Record<string, unknown> = {}) {
+  const time = new Date().toISOString();
+  const payload = { time, level, message, ...meta };
+  const line = JSON.stringify(payload);
+  if (level === "error") console.error(line);
+  else if (level === "warn") console.warn(line);
+  else console.log(line);
+};
   const text = JSON.stringify(payload);
   if (level === "error") {
     console.error(text);
