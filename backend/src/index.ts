@@ -96,7 +96,23 @@ const routes: Record<string, RouteHandler> = {
 };
 
 const rateLimitState = new Map<string, { count: number; expiresAt: number }>();
+function enforceRateLimit(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+  const ip = getClientIp(req);
+  const now = Date.now();
+  const state = rateLimitState.get(ip);
 
+  if (!state || now > state.expiresAt) {
+    rateLimitState.set(ip, { count: 1, expiresAt: now + RATE_LIMIT_WINDOW_MS });
+    return true;
+  }
+  if (state.count >= RATE_LIMIT_MAX) {
+    res.writeHead(429, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "rate limit" }));
+    return false;
+  }
+  state.count++;
+  return true;
+}
 const server = http.createServer(async (req, res) => {
   try {
     applyCors(res, req);
@@ -603,23 +619,16 @@ function getClientIp(req: http.IncomingMessage): string {
   // IPv4-mapped IPv6 を見やすく
   return ra.replace(/^::ffff:/, "");
 }
+// どこからでも呼べるように、ファイル先頭のスコープ直下に置く
 type LogLevel = "info" | "warn" | "error";
-function log(level: LogLevel, message: string, meta: Record<string, unknown> = {}) {
-  const time = new Date().toISOString();
-  const payload = { time, level, message, ...meta };
-  const line = JSON.stringify(payload);
-  if (level === "error") console.error(line);
-  else if (level === "warn") console.warn(line);
-  else console.log(line);
-};
-  const text = JSON.stringify(payload);
-  if (level === "error") {
-    console.error(text);
-  } else if (level === "warn") {
-    console.warn(text);
-  } else {
-    console.log(text);
-  }
+
+/** 1行JSONの構造化ログ */
+function log(level: LogLevel, message: string, meta: Record<string, unknown> = {}): void {
+  const entry = { time: new Date().toISOString(), level, message, ...meta };
+  const text = JSON.stringify(entry);
+  if (level === "error") console.error(text);
+  else if (level === "warn") console.warn(text);
+  else console.log(text);
 }
 
 function serializeError(error: unknown): Record<string, unknown> {
