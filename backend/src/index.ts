@@ -135,7 +135,8 @@ const server = http.createServer(async (req, res) => {
 
     const method = req.method ?? "GET";
     const url = buildUrl(req);
-    const routeKey = `${method.toUpperCase()} ${url.pathname}`;
+    const normalizedPath = normalizePathname(url.pathname);
+    const routeKey = `${method.toUpperCase()} ${normalizedPath}`;
     const handler = routes[routeKey];
 
     if (!handler) {
