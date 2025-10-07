@@ -381,31 +381,6 @@ function normalizeHistoryMessage(
       ? message.next_fields.filter((item): item is string => typeof item === "string")
       : [];
     const stage =
-    </div>
-  );
-}
-
-type HistoryMessage = {
-  role: string;
-  content: string;
-  createdAt: number;
-  stage?: string;
-  next_fields?: string[];
-};
-
-function normalizeHistoryMessage(
-  message: HistoryMessage,
-  fallbackStage: string | null
-): Msg | null {
-  if (message.role === "user" && typeof message.content === "string") {
-    return { role: "user", content: message.content };
-  }
-
-  if (message.role === "coach" && typeof message.content === "string") {
-    const fields = Array.isArray(message.next_fields)
-      ? message.next_fields.filter((item): item is string => typeof item === "string")
-      : [];
-    const stage =
       typeof message.stage === "string" && message.stage
         ? message.stage
         : fallbackStage ?? "G";
