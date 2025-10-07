@@ -3,8 +3,8 @@
 @tailwind utilities;
 
 /* ---- Theme (WhatsApp inspired palette) ---- */
-/* Tailwindのパレット相当色をHEXで定義（theme()は使わない） */
-:root{
+/* Tailwind の theme() は使わず、CSS 変数で色を一元管理 */
+:root {
   --bg: #0b141a;
   --card: #111b21;
   --ink: #e9edef;
@@ -14,26 +14,48 @@
   --accent-weak: #1f2c34;
 }
 
-/* 全体 */
+/* ---- Document ---- */
 html, body { height: 100%; }
+
 body {
   background: radial-gradient(circle at top, #233138 0%, rgba(35,49,56,0) 55%), var(--bg);
   color: var(--ink);
   font-feature-settings: "ss01","cv01";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* スクロールバー */
+/* ---- Scrollbar ---- */
+/* Firefox */
+* { scrollbar-color: #6ee7b7 #d1fae5; scrollbar-width: thin; }
+/* WebKit */
 *::-webkit-scrollbar { width: 10px; height: 10px; }
 *::-webkit-scrollbar-thumb { background: #6ee7b7; border-radius: 9999px; } /* emerald-300 */
 *::-webkit-scrollbar-track { background: #d1fae5; }                        /* emerald-100 */
 
-/* フォーカス */
-:focus-visible { outline: 3px solid #34d399; outline-offset: 2px; }        /* emerald-400 */
-/* WhatsApp風 背景パターン */
+/* ---- Focus Ring ---- */
+:focus-visible {
+  outline: 3px solid #34d399;        /* emerald-400 */
+  outline-offset: 2px;
+}
+
+/* ---- WhatsApp-like chat background pattern (apply only to chat area) ---- */
 .chat-pattern {
   background-color: #e5ddd5;
   background-image:
     radial-gradient(circle at 3px 3px, rgba(7, 94, 84, 0.14) 0, rgba(7, 94, 84, 0.14) 1px, transparent 1px),
     radial-gradient(circle at 20px 20px, rgba(7, 94, 84, 0.08) 0, rgba(7, 94, 84, 0.08) 1px, transparent 1px);
   background-size: 40px 40px;
+}
+
+/* ---- Chat text helpers ---- */
+.chat-text {
+  white-space: pre-wrap;   /* 改行を保持して折り返す */
+  word-break: break-word;  /* 長い単語を中断して折り返す */
+  line-height: 1.7;        /* 読みやすい行間 */
+}
+
+/* ---- iOS セーフエリア（下部固定の入力欄などに） ---- */
+.safe-bottom {
+  padding-bottom: max(env(safe-area-inset-bottom), 0.75rem);
 }

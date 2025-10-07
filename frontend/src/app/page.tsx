@@ -10,7 +10,7 @@ export default function Page() {
           <div className="space-y-4">
             <div>
               <h1 className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">
-                Grow Coach
+                アイコチ（GROW編）
               </h1>
               <p className="mt-2 text-sm text-[#8696a0]">
                 メールリンクでログインして、コーチとの会話を開始しましょう。
@@ -21,7 +21,7 @@ export default function Page() {
                 サインイン
               </h2>
               <p className="mt-1 text-xs text-[#8696a0]">
-                WhatsApp風のチャット画面でGrow Coachと会話するには、メールアドレスを入力してサインインリンクを受け取ってください。
+                Grow Coachと会話するには、メールアドレスを入力してサインインリンクを受け取ってください。
               </p>
               <div className="mt-4">
                 <EmailLinkForm />
