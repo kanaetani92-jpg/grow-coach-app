@@ -1,51 +1,47 @@
 // API 呼び出しの共通ラッパー（Authorization: Bearer <idToken> を付与）
-const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? ""; // 例: https://<CloudRun>/api
+const BASE_URL = (process.env.NEXT_PUBLIC_BACKEND_BASE_URL ?? "").replace(/\/$/, "");
 
-if (!BASE_URL) {
-  console.warn("NEXT_PUBLIC_BACKEND_URL is not set. API calls will fail.");
-}
+type SessionResponse = { sessionId: string; stage: string };
 
-export class ApiError extends Error {
-  constructor(
-    message: string,
-    public readonly status: number,
-    public readonly body: string
-  ) {
-    super(message);
-    this.name = "ApiError";
-  }
-}
-
-type FetchOptions = {
-  method?: string;
-  idToken: string;
-  body?: unknown;
-};
-
-async function request<T>(
-  path: string,
-  { method = "GET", idToken, body }: FetchOptions
-): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, {
-    method,
+export async function createSession(idToken: string): Promise<SessionResponse> {
+  const res = await fetch(`${BASE_URL}/api/sessions`, {
+    method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${idToken}`,
     },
-    body: body ? JSON.stringify(body) : undefined,
+    body: JSON.stringify({}),
     credentials: "include",
   });
-
   if (!res.ok) {
     const text = await res.text();
-    throw new ApiError(`${method} ${path} failed`, res.status, text);
+    throw new Error(`createSession failed: ${res.status} ${text}`);
   }
+  return (await res.json()) as SessionResponse;
+}
 
-  if (res.status === 204) {
-    return undefined as T;
+export async function callCoach(
+  payload: { sessionId: string; userText: string },
+  idToken: string
+): Promise<{ stage: string; message: string; next_fields: string[] }> {
+  const res = await fetch(`${BASE_URL}/api/coach`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify(payload),
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`callCoach failed: ${res.status} ${text}`);
   }
-
-  return (await res.json()) as T;
+  return (await res.json()) as {
+    stage: string;
+    message: string;
+    next_fields: string[];
+  };
 }
 
 export async function createSession(

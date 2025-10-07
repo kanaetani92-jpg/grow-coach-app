@@ -16,45 +16,47 @@ import { auth } from "@/lib/firebase";
 import { ApiError, createSession } from "@/lib/api";
 import { getErrorMessage } from "@/lib/errors";
 import { logEvent } from "@/lib/logger";
+        // メールリンクかチェック
+        if (!isSignInWithEmailLink(auth, window.location.href)) {
+          setStatus("このURLは無効です。");
+          return;
+        }
 
-const ACTIVE_SESSION_KEY = "activeSessionId";
+        // 送信時に保存したメール or 入力プロンプト
+        let email = localStorage.getItem("emailForSignIn") || "";
+        if (!email) {
+          email = window.prompt("メールアドレスを入力してください") || "";
+        }
+        if (!email) {
+          setStatus("メールアドレスが入力されませんでした。");
+          return;
+        }
 
-export default function EmailLinkComplete() {
-  const router = useRouter();
-  const [status, setStatus] = useState<string>("リンクを確認しています...");
-  const [email, setEmail] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [resending, setResending] = useState(false);
-  const [needsEmail, setNeedsEmail] = useState(false);
-  const [canResend, setCanResend] = useState(false);
+        // サインイン
+        await signInWithEmailLink(auth, email, window.location.href);
+        localStorage.removeItem("emailForSignIn");
+        setStatus("サインインに成功。セッションを作成しています...");
 
-  const actionCodeSettings = useMemo<ActionCodeSettings>(() => {
-    const origin =
-      typeof window !== "undefined" && window.location.origin
-        ? window.location.origin
-        : process.env.NEXT_PUBLIC_APP_ORIGIN ?? "https://example.com";
-    return {
-      url: `${origin}/email-link-complete`,
-      handleCodeInApp: true,
+        // IDトークン→セッション作成
+        const unsub = onAuthStateChanged(auth, async (user) => {
+          if (!user) return;
+          const idToken = await user.getIdToken();
+          const session = await createSession(idToken);
+          localStorage.setItem("currentSessionId", session.sessionId);
+          localStorage.setItem("currentSessionStage", session.stage);
+          setStatus("完了！トップへ戻ります...");
+          unsub();
+          window.location.replace("/");
+        });
+      } catch (error: unknown) {
+        setStatus(`エラー: ${getErrorMessage(error)}`);
+      }
     };
+    run();
   }, []);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    if (!isSignInWithEmailLink(auth, window.location.href)) {
-      setStatus("このリンクは無効か、期限が切れています。");
-      setError("サインインリンクが無効です。再送信してから再度お試しください。");
-      setCanResend(true);
-      return;
-    }
-
-    const storedEmail = window.localStorage.getItem("emailForSignIn") ?? "";
-    if (!storedEmail) {
-      setStatus("メールアドレスを入力してください。");
-      setNeedsEmail(true);
-      return;
-    }
+  return <p className="p-4">{status}</p>;
+}
 
     setEmail(storedEmail);
     void completeSignIn(storedEmail);

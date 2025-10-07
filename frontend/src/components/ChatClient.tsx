@@ -3,13 +3,15 @@
 import { useEffect, useRef, useState } from "react";
 import { auth } from "@/lib/firebase";
 import { onAuthStateChanged, signOut } from "firebase/auth";
-import { callCoach } from "@/lib/api";
+import { callCoach, createSession } from "@/lib/api";
 import { getErrorMessage } from "@/lib/errors";
 
 type Msg = { role: "user" | "assistant"; content: string };
 
 export default function ChatClient() {
   const [authed, setAuthed] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [stage, setStage] = useState<string | null>(null);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -20,11 +22,39 @@ export default function ChatClient() {
     const unsub = onAuthStateChanged(auth, async (user) => {
       if (!user) {
         setAuthed(false);
+        setSessionId(null);
+        setStage(null);
         tokenRef.current = null;
         return;
       }
       setAuthed(true);
-      tokenRef.current = await user.getIdToken();
+      const idToken = await user.getIdToken();
+      tokenRef.current = idToken;
+
+      const storedSessionId = window.localStorage.getItem("currentSessionId");
+      if (storedSessionId) {
+        setSessionId(storedSessionId);
+        const storedStage = window.localStorage.getItem("currentSessionStage");
+        setStage(storedStage);
+        return;
+      }
+
+      try {
+        const session = await createSession(idToken);
+        setSessionId(session.sessionId);
+        setStage(session.stage);
+        window.localStorage.setItem("currentSessionId", session.sessionId);
+        window.localStorage.setItem("currentSessionStage", session.stage);
+      } catch (error) {
+        const message = getErrorMessage(error);
+        setMessages((m) => [
+          ...m,
+          {
+            role: "assistant",
+            content: `セッションの作成に失敗しました: ${message}`,
+          },
+        ]);
+      }
     });
     return () => unsub();
   }, []);
@@ -47,8 +77,18 @@ export default function ChatClient() {
       if (!idToken) {
         throw new Error("ログイン情報を取得できませんでした。");
       }
-      const reply = await callCoach({ message: msg }, idToken);
-      setMessages((m) => [...m, { role: "assistant", content: reply }]);
+      const activeSessionId = sessionId;
+      if (!activeSessionId) {
+        throw new Error("セッションが見つかりませんでした。");
+      }
+      const reply = await callCoach(
+        { sessionId: activeSessionId, userText: msg },
+        idToken
+      );
+      setStage(reply.stage);
+      window.localStorage.setItem("currentSessionStage", reply.stage);
+      const assistantMessage = formatAssistantMessage(reply.message, reply.next_fields, reply.stage);
+      setMessages((m) => [...m, { role: "assistant", content: assistantMessage }]);
     } catch (error: unknown) {
       const message = getErrorMessage(error);
       setMessages((m) => [
@@ -76,6 +116,10 @@ export default function ChatClient() {
           サインアウト
         </button>
       </div>
+      <div className="text-xs text-gray-600 space-y-1">
+        {sessionId && <p>セッションID: {sessionId}</p>}
+        {stage && <p>現在のステージ: {stage}</p>}
+      </div>
 
       <div
         ref={scrollRef}
@@ -98,13 +142,13 @@ export default function ChatClient() {
               >
                 <span
                   className={
-                    message.role === "user"
-                      ? "inline-block max-w-[80%] rounded-lg bg-black px-3 py-2 text-sm text-white"
-                      : "inline-block max-w-[80%] rounded-lg bg-white px-3 py-2 text-sm text-gray-800 shadow"
-                  }
-                >
-                  {message.content}
-                </span>
+                  message.role === "user"
+                    ? "inline-block max-w-[80%] rounded-lg bg-black px-3 py-2 text-sm text-white"
+                    : "inline-block max-w-[80%] rounded-lg bg-white px-3 py-2 text-sm text-gray-800 shadow whitespace-pre-wrap"
+              }
+            >
+              {message.content}
+            </span>
               </li>
             ))}
           </ul>
@@ -135,4 +179,18 @@ export default function ChatClient() {
       </form>
     </div>
   );
+}
+
+function formatAssistantMessage(
+  message: string,
+  nextFields: string[],
+  stage: string
+): string {
+  const lines: string[] = [];
+  lines.push(`【ステージ: ${stage}】${message}`);
+  if (nextFields.length > 0) {
+    lines.push("次に確認したい項目:");
+    lines.push(...nextFields.map((field) => `・${field}`));
+  }
+  return lines.join("\n");
 }
