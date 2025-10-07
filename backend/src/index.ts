@@ -93,6 +93,7 @@ const routes: Record<string, RouteHandler> = {
   "POST /api/sessions": requireAuth(handleCreateSession),
   "POST /api/coach": requireAuth(handleCoach),
   "GET /api/history": requireAuth(handleHistory),
+  "GET /api": handleApiRoot,
 };
 
 const rateLimitState = new Map<string, { count: number; expiresAt: number }>();
@@ -113,6 +114,12 @@ function enforceRateLimit(req: http.IncomingMessage, res: http.ServerResponse): 
   state.count++;
   return true;
 }
+
+function normalizePathname(pathname: string): string {
+  if (pathname.length > 1 && pathname.endsWith("/")) return pathname.slice(0, -1);
+  return pathname;
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     applyCors(res, req);
@@ -127,7 +134,7 @@ const server = http.createServer(async (req, res) => {
 
     const method = req.method ?? "GET";
     const url = buildUrl(req);
-    const routeKey = `${method.toUpperCase()} ${url.pathname}`;
+    const routeKey = `${method.toUpperCase()} ${normalizePathname(url.pathname)}`;
     const handler = routes[routeKey];
 
     if (!handler) {
@@ -262,11 +269,13 @@ function requireAuth(
   };
 }
 
-function handleHealth({ res }: RequestContext) {
-  if (!res.headersSent) {
-    res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
-  }
-  res.end("ok");
+function handleApiRoot({ res }: RequestContext) {
+  sendJson(res, 200, {
+    ok: true,
+    name: "grow-backend",
+    endpoints: ["/api/sessions (POST)", "/api/coach (POST)", "/api/history (GET)"],
+    time: new Date().toISOString(),
+  });
 }
 
 async function handleCreateSession({ uid, res }: RequestContext & { uid: string }) {
