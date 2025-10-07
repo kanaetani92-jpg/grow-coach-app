@@ -2,8 +2,7 @@
 // NOTE: 旧名称 `NEXT_PUBLIC_BACKEND_BASE_URL` との互換性を維持するため、
 //       `NEXT_PUBLIC_BACKEND_URL` と両方の環境変数を参照する。
 const rawBaseUrl =
-  process.env.NEXT_PUBLIC_BACKEND_BASE_URL ??
-  process.env.NEXT_PUBLIC_BACKEND_URL ??
+const apiUrl = process.env.NEXT_PUBLIC_API_BASE_URL; //
   "";
 
 const trimmedBaseUrl = rawBaseUrl.replace(/\/$/, "");

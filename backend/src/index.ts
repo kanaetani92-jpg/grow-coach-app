@@ -120,6 +120,7 @@ function normalizePathname(pathname: string): string {
   return pathname;
 }
 
+
 const server = http.createServer(async (req, res) => {
   try {
     applyCors(res, req);
@@ -134,7 +135,7 @@ const server = http.createServer(async (req, res) => {
 
     const method = req.method ?? "GET";
     const url = buildUrl(req);
-    const routeKey = `${method.toUpperCase()} ${normalizePathname(url.pathname)}`;
+    const routeKey = `${method.toUpperCase()} ${url.pathname}`;
     const handler = routes[routeKey];
 
     if (!handler) {
