@@ -70,7 +70,7 @@ export default function ChatClient() {
       }
     });
     return () => unsub();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    
   }, []);
 
   // ===== メッセージ追加時は最下部へスクロール =====

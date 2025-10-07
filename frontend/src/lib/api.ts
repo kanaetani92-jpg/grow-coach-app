@@ -1,153 +1,74 @@
-// API 呼び出しの共通ラッパー（Authorization: Bearer <idToken> を付与）
-// NOTE: 旧名称 `NEXT_PUBLIC_BACKEND_BASE_URL` との互換性を維持するため、
-//       `NEXT_PUBLIC_BACKEND_URL` と両方の環境変数を参照する。
-const rawBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
-const apiUrl = process.env.NEXT_PUBLIC_API_BASE_URL; //
-  "";
-
-const trimmedBaseUrl = rawBaseUrl.replace(/\/$/, "");
-const isFallbackApiBase = trimmedBaseUrl === "";
-const apiBase = isFallbackApiBase
-  ? "/api"
-  : trimmedBaseUrl.endsWith("/api")
-      ? trimmedBaseUrl
-      : `${trimmedBaseUrl}/api`;
-
+// frontend/src/lib/api.ts
 export class ApiError extends Error {
-  readonly status: number;
-
-  constructor(message: string, status: number) {
-    super(message || `API request failed with status ${status}`);
-    this.name = "ApiError";
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
     this.status = status;
   }
 }
 
-type RequestOptions = {
-  method?: string;
-  idToken?: string;
-  body?: unknown;
-};
-
-async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { method = options.body ? "POST" : "GET", idToken, body } = options;
-  const headers = new Headers();
-
-  if (idToken) {
-    headers.set("Authorization", `Bearer ${idToken}`);
-  }
-  if (body !== undefined && method !== "GET" && method !== "HEAD") {
-    headers.set("Content-Type", "application/json");
-  }
-
-  const urlPath = path.startsWith("/") ? path : `/${path}`;
-  const url = `${apiBase}${urlPath.startsWith("/") ? "" : "/"}${urlPath}`;
-
-    let res: Response;
-  try {
-    const init: RequestInit = {
-      method,
-      headers,
-      body:
-        body !== undefined && method !== "GET" && method !== "HEAD"
-          ? JSON.stringify(body)
-          : undefined,
-          };
-
-    if (isFallbackApiBase) {
-      init.credentials = "include";
-    }
-
-    res = await fetch(url, init);
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    const connectionHelp = isFallbackApiBase
-      ?
-          "Next.js の `/api` プレースホルダーへアクセスできなかった可能性があります。" +
-        " `NEXT_PUBLIC_BACKEND_URL` (または `NEXT_PUBLIC_BACKEND_BASE_URL`) を設定して、正しいバックエンドを指すようにしてください。"
-      : `設定されているバックエンド (${trimmedBaseUrl || ""}) に接続できませんでした。ネットワークやサーバーの状態を確認してください。`;
-    throw new ApiError(
-      `バックエンド API への接続に失敗しました。(${reason}) ${connectionHelp}`.trim(),
-      0
+function getApiBase(): string {
+  const raw =
+    process.env.NEXT_PUBLIC_BACKEND_BASE_URL ||
+    process.env.NEXT_PUBLIC_BACKEND_URL ||
+    process.env.NEXT_PUBLIC_API_BASE_URL ||
+    "";
+  const base = raw.replace(/\/+$/, "");
+  if (!base) {
+    throw new Error(
+      "Missing env: NEXT_PUBLIC_BACKEND_BASE_URL (or *_BACKEND_URL / NEXT_PUBLIC_API_BASE_URL)"
     );
   }
-
-  if (!res.ok) {
-    let message: string;
-    try {
-      message = await res.text();
-    } catch {
-      message = res.statusText;
-    }
-
-    if (isFallbackApiBase && (res.status === 404 || res.status === 405)) {
-      message =
-        "バックエンド API のベース URL が設定されていないため、Next.js の `/api` プレースホルダーにアクセスして 404/405 が返却されました。" +
-        " `NEXT_PUBLIC_BACKEND_URL` (または `NEXT_PUBLIC_BACKEND_BASE_URL`) を設定して、正しいバックエンドにリクエストが送られるようにしてください。";
-    }
-
-    throw new ApiError(message, res.status);
-  }
-
-  if (res.status === 204) {
-    return undefined as T;
-  }
-
-  const contentType = res.headers.get("Content-Type") ?? "";
-  if (contentType.includes("application/json")) {
-    return (await res.json()) as T;
-  }
-
-  return (await res.text()) as unknown as T;
+  return `${base}/api`;
 }
 
-type SessionResponse = { sessionId: string; stage: string };
+const API_BASE = getApiBase();
 
-type CoachResponse = {
-  stage: string;
-  message: string;
-  next_fields: string[];
-};
+async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    credentials: "include",
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(init.headers || {}),
+    },
+  });
 
-type HistoryMessage = {
-  role: string;
-  content: string;
-  createdAt: number;
-  stage?: string;
-  next_fields?: string[];
-};
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new ApiError(res.status, text || res.statusText);
+  }
+  return (await res.json()) as T;
+}
 
-type HistoryResponse = {
-  messages: HistoryMessage[];
-  stage?: string;
-};
-
-export async function createSession(idToken: string): Promise<SessionResponse> {
-  return await request<SessionResponse>("/sessions", {
+export async function createSession(
+  idToken: string
+): Promise<{ sessionId: string; stage: string }> {
+  return apiFetch("/sessions", {
     method: "POST",
-    idToken,
-    body: {},
+    headers: { Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({}),
   });
 }
 
 export async function callCoach(
   payload: { sessionId: string; userText: string },
   idToken: string
-): Promise<CoachResponse> {
-  return await request<CoachResponse>("/coach", {
+): Promise<{ stage: string; message: string; next_fields: string[] }> {
+  return apiFetch("/coach", {
     method: "POST",
-    idToken,
-    body: payload,
+    headers: { Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify(payload),
   });
 }
 
 export async function fetchHistory(
   sessionId: string,
   idToken: string
-): Promise<HistoryResponse> {
-  const query = new URLSearchParams({ sessionId }).toString();
-  return await request<HistoryResponse>(`/history?${query}`, {
+): Promise<{ stage?: string; messages: any[] }> {
+  const qs = new URLSearchParams({ sessionId }).toString();
+  return apiFetch(`/history?${qs}`, {
     method: "GET",
-    idToken,
+    headers: { Authorization: `Bearer ${idToken}` },
   });
 }
