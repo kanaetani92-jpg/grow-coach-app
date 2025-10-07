@@ -574,6 +574,109 @@ function parseCoachPayload(text: string, fallbackStage: Stage = "G"): CoachPaylo
         .filter((item) => item.length > 0)
     : [];
 
+    function parseGeminiJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    const extracted = extractJsonObject(text);
+    if (extracted) {
+      try {
+        return JSON.parse(extracted);
+      } catch (innerError) {
+        const message =
+          innerError instanceof Error ? innerError.message : String(innerError);
+        throw new Error(`Gemini output is not valid JSON: ${message}`);
+      }
+    }
+
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Gemini output is not valid JSON: ${message}`);
+  }
+}
+
+function extractJsonObject(text: string): string | undefined {
+  const start = text.indexOf("{");
+  if (start === -1) {
+    return undefined;
+  }
+
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+
+  for (let i = start; i < text.length; i++) {
+    const char = text[i];
+
+    if (inString) {
+      if (escape) {
+        escape = false;
+      } else if (char === "\\") {
+        escape = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{") {
+      depth++;
+    } else if (char === "}") {
+      depth--;
+      if (depth === 0) {
+        return text.slice(start, i + 1);
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function normalizeStage(value: unknown): Stage | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  if (VALID_STAGES.has(trimmed as Stage)) {
+    return trimmed as Stage;
+  }
+
+  const simplified = trimmed.replace(/[^a-z]/gi, "");
+  const upper = simplified.toUpperCase();
+
+  switch (upper) {
+    case "G":
+    case "GOAL":
+      return "G";
+    case "R":
+    case "REALITY":
+      return "R";
+    case "O":
+    case "OPTIONS":
+      return "O";
+    case "W":
+    case "WILL":
+      return "W";
+    case "WRAP":
+    case "WRAPUP":
+    case "WRAPUPREVIEW":
+      return "Wrap";
+    case "REVIEW":
+      return "Review";
+    default:
+      return undefined;
+  }
+}
+
   return { stage, message, next_fields: nextFields };
 }
 
