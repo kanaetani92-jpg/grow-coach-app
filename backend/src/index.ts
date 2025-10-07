@@ -197,12 +197,20 @@ function loadEnvFile() {
 }
 
 function applyCors(res: http.ServerResponse, req: http.IncomingMessage) {
-  const originHeader = req.headers.origin ?? "";
+  const originHeader = (req.headers.origin ?? "") as string;
   const allowOrigin = resolveAllowedOrigin(originHeader, allowedOrigins);
-  res.setHeader("Access-Control-Allow-Origin", allowOrigin);
+
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Credentials", "true");
+  res.setHeader("Vary", "Origin");
+
+  if (!allowOrigin || allowOrigin === "*") {
+    // * の場合は credentials を付けない
+    res.setHeader("Access-Control-Allow-Origin", "*");
+  } else {
+    res.setHeader("Access-Control-Allow-Origin", allowOrigin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+  }
 }
 
 function buildUrl(req: http.IncomingMessage): URL {
