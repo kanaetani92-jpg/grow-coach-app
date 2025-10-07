@@ -16,60 +16,40 @@ import { auth } from "@/lib/firebase";
 import { ApiError, createSession } from "@/lib/api";
 import { getErrorMessage } from "@/lib/errors";
 import { logEvent } from "@/lib/logger";
-        // メールリンクかチェック
-        if (!isSignInWithEmailLink(auth, window.location.href)) {
-          setStatus("このURLは無効です。");
-          return;
-        }
 
-        // 送信時に保存したメール or 入力プロンプト
-        let email = localStorage.getItem("emailForSignIn") || "";
-        if (!email) {
-          email = window.prompt("メールアドレスを入力してください") || "";
-        }
-        if (!email) {
-          setStatus("メールアドレスが入力されませんでした。");
-          return;
-        }
+const EMAIL_STORAGE_KEY = "emailForSignIn";
+const ACTIVE_SESSION_KEY = "currentSessionId";
+const ACTIVE_STAGE_KEY = "currentSessionStage";
 
-        // サインイン
-        await signInWithEmailLink(auth, email, window.location.href);
-        localStorage.removeItem("emailForSignIn");
-        setStatus("サインインに成功。セッションを作成しています...");
+export default function EmailLinkCompletePage() {
+  const router = useRouter();
+  const [status, setStatus] = useState("リンクを確認しています...");
+  const [email, setEmail] = useState("");
+  const [needsEmail, setNeedsEmail] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [canResend, setCanResend] = useState(false);
+  const [resending, setResending] = useState(false);
 
-        // IDトークン→セッション作成
-        const unsub = onAuthStateChanged(auth, async (user) => {
-          if (!user) return;
-          const idToken = await user.getIdToken();
-          const session = await createSession(idToken);
-          localStorage.setItem("currentSessionId", session.sessionId);
-          localStorage.setItem("currentSessionStage", session.stage);
-          setStatus("完了！トップへ戻ります...");
-          unsub();
-          window.location.replace("/");
-        });
-      } catch (error: unknown) {
-        setStatus(`エラー: ${getErrorMessage(error)}`);
-      }
-    };
-    run();
-  }, []);
-
-  return <p className="p-4">{status}</p>;
-}
-
-    setEmail(storedEmail);
-    void completeSignIn(storedEmail);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  const actionCodeSettings = useMemo<ActionCodeSettings | null>(() => {
+    if (typeof window === "undefined") {
+      return null;
+    }
+    return {
+      url: `${window.location.origin}/email-link-complete`,
+      handleCodeInApp: true,
+    } satisfies ActionCodeSettings;
   }, []);
 
   const completeSignIn = useCallback(
     async (targetEmail: string) => {
       try {
+        setNeedsEmail(false);
         setStatus("サインイン処理中です...");
         setError(null);
+        setCanResend(false);
+
         await signInWithEmailLink(auth, targetEmail, window.location.href);
-        window.localStorage.removeItem("emailForSignIn");
+        window.localStorage.removeItem(EMAIL_STORAGE_KEY);
         setStatus("サインインに成功しました。セッションを準備しています...");
 
         const user = await waitForUser();
@@ -78,15 +58,16 @@ import { logEvent } from "@/lib/logger";
         }
 
         let token = await user.getIdToken();
-        const session = await createSession(token).catch(async (error) => {
-          if (error instanceof ApiError && error.status === 401) {
+        const session = await createSession(token).catch(async (apiError) => {
+          if (apiError instanceof ApiError && apiError.status === 401) {
             token = await user.getIdToken(true);
             return await createSession(token);
           }
-          throw error;
+          throw apiError;
         });
 
         window.localStorage.setItem(ACTIVE_SESSION_KEY, session.sessionId);
+        window.localStorage.setItem(ACTIVE_STAGE_KEY, session.stage);
         logEvent("session_created", {
           from: "email-link-complete",
           sessionId: session.sessionId,
@@ -108,6 +89,26 @@ import { logEvent } from "@/lib/logger";
     [router]
   );
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    if (!isSignInWithEmailLink(auth, window.location.href)) {
+      setStatus("このURLは無効です。");
+      setNeedsEmail(false);
+      return;
+    }
+
+    const storedEmail = window.localStorage.getItem(EMAIL_STORAGE_KEY);
+    if (!storedEmail) {
+      setNeedsEmail(true);
+      setStatus("サインインに使用したメールアドレスを入力してください。");
+      return;
+    }
+
+    setEmail(storedEmail);
+    void completeSignIn(storedEmail);
+  }, [completeSignIn]);
+
   const onSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const trimmed = email.trim();
@@ -115,8 +116,7 @@ import { logEvent } from "@/lib/logger";
       setError("メールアドレスを入力してください。");
       return;
     }
-    window.localStorage.setItem("emailForSignIn", trimmed);
-    setNeedsEmail(false);
+    window.localStorage.setItem(EMAIL_STORAGE_KEY, trimmed);
     await completeSignIn(trimmed);
   };
 
@@ -126,6 +126,11 @@ import { logEvent } from "@/lib/logger";
       setError("再送するメールアドレスを入力してください。");
       return;
     }
+    if (!actionCodeSettings) {
+      setError("再送の準備中です。少し待ってからもう一度お試しください。");
+      return;
+    }
+
     setResending(true);
     setError(null);
     try {
@@ -144,7 +149,7 @@ import { logEvent } from "@/lib/logger";
   const onResetEmail = () => {
     setEmail("");
     setNeedsEmail(true);
-    window.localStorage.removeItem("emailForSignIn");
+    window.localStorage.removeItem(EMAIL_STORAGE_KEY);
   };
 
   return (

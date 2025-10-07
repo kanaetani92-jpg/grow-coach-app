@@ -1,53 +1,87 @@
++80
+-62
+
 // API 呼び出しの共通ラッパー（Authorization: Bearer <idToken> を付与）
 const BASE_URL = (process.env.NEXT_PUBLIC_BACKEND_BASE_URL ?? "").replace(/\/$/, "");
+const API_PREFIX = "/api";
+
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message || `API request failed with status ${status}`);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+type RequestOptions = {
+  method?: string;
+  idToken?: string;
+  body?: unknown;
+};
+
+async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const { method = options.body ? "POST" : "GET", idToken, body } = options;
+  const headers = new Headers();
+
+  if (idToken) {
+    headers.set("Authorization", `Bearer ${idToken}`);
+  }
+  if (body !== undefined && method !== "GET" && method !== "HEAD") {
+    headers.set("Content-Type", "application/json");
+  }
+
+  const urlPath = path.startsWith("/") ? path : `/${path}`;
+  const url = `${BASE_URL}${API_PREFIX}${urlPath}`;
+
+  const res = await fetch(url, {
+    method,
+    headers,
+    body:
+      body !== undefined && method !== "GET" && method !== "HEAD"
+        ? JSON.stringify(body)
+        : undefined,
+    credentials: "include",
+  });
+
+  if (!res.ok) {
+    let message: string;
+    try {
+      message = await res.text();
+    } catch {
+      message = res.statusText;
+    }
+    throw new ApiError(message, res.status);
+  }
+
+  if (res.status === 204) {
+    return undefined as T;
+  }
+
+  const contentType = res.headers.get("Content-Type") ?? "";
+  if (contentType.includes("application/json")) {
+    return (await res.json()) as T;
+  }
+
+  return (await res.text()) as unknown as T;
+}
 
 type SessionResponse = { sessionId: string; stage: string };
 
+type CoachResponse = {
+  stage: string;
+  message: string;
+  next_fields: string[];
+};
+
+type HistoryResponse = {
+  messages: Array<{ role: string; content: string; createdAt: number }>;
+  stage?: string;
+};
+
 export async function createSession(idToken: string): Promise<SessionResponse> {
-  const res = await fetch(`${BASE_URL}/api/sessions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${idToken}`,
-    },
-    body: JSON.stringify({}),
-    credentials: "include",
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`createSession failed: ${res.status} ${text}`);
-  }
-  return (await res.json()) as SessionResponse;
-}
-
-export async function callCoach(
-  payload: { sessionId: string; userText: string },
-  idToken: string
-): Promise<{ stage: string; message: string; next_fields: string[] }> {
-  const res = await fetch(`${BASE_URL}/api/coach`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${idToken}`,
-    },
-    body: JSON.stringify(payload),
-    credentials: "include",
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`callCoach failed: ${res.status} ${text}`);
-  }
-  return (await res.json()) as {
-    stage: string;
-    message: string;
-    next_fields: string[];
-  };
-}
-
-export async function createSession(
-  idToken: string
-): Promise<{ sessionId: string; stage: string }> {
-  return await request<{ sessionId: string; stage: string }>("/sessions", {
+  return await request<SessionResponse>("/sessions", {
     method: "POST",
     idToken,
     body: {},
@@ -57,34 +91,21 @@ export async function createSession(
 export async function callCoach(
   payload: { sessionId: string; userText: string },
   idToken: string
-): Promise<{ stage: string; message: string; next_fields: string[] }> {
-  return await request<{ stage: string; message: string; next_fields: string[] }>(
-    "/coach",
-    {
-      method: "POST",
-      idToken,
-      body: payload,
-    }
-  );
+): Promise<CoachResponse> {
+  return await request<CoachResponse>("/coach", {
+    method: "POST",
+    idToken,
+    body: payload,
+  });
 }
 
 export async function fetchHistory(
   sessionId: string,
   idToken: string
-): Promise<{
-  messages: Array<{ role: string; content: string; createdAt: number }>;
-  stage?: string;
-}>
-{
+): Promise<HistoryResponse> {
   const params = new URLSearchParams({ sessionId });
-  return await request<{
-    messages: Array<{ role: string; content: string; createdAt: number }>;
-    stage?: string;
-  }>(
-    `/history?${params.toString()}`,
-    {
-      method: "GET",
-      idToken,
-    }
-  );
+  return await request<HistoryResponse>(`/history?${params.toString()}`, {
+    method: "GET",
+    idToken,
+  });
 }
