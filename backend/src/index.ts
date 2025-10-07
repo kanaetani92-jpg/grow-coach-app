@@ -505,55 +505,31 @@ type GeminiResponse = {
     blockReason?: string;
   };
 };
+const GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
 
 async function generateGeminiContent(parts: Array<{ text: string }>): Promise<string> {
-  const response = await fetchFn(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${encodeURIComponent(
-      GEMINI_API_KEY!
-    )}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contents: [{ role: "user", parts }] }),
-    }
-  );
+  const model = GEMINI_MODEL;
 
-  const raw = await response.text();
+  const url =
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent` +
+    `?key=${encodeURIComponent(GEMINI_API_KEY!)}`;
 
-  if (!response.ok) {
-    throw new Error(`Gemini API error: ${response.status} ${raw}`);
-  }
-
-  let data: GeminiResponse;
-  try {
-    data = raw ? (JSON.parse(raw) as GeminiResponse) : {};
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Gemini API returned invalid JSON: ${message}`);
-  }
-
-  if (data.promptFeedback?.blockReason) {
-    throw new Error(`Gemini API blocked the request: ${data.promptFeedback.blockReason}`);
-  }
-
-  const candidate = data.candidates?.find((item) => {
-    const parts = item.content?.parts ?? [];
-    return parts.some((part) => typeof part.text === "string" && part.text.trim().length > 0);
+  const response = await fetchFn(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ contents: [{ role: "user", parts }] }),
   });
 
-  if (!candidate) {
-    throw new Error("Gemini API returned no usable candidates");
-  }
+  const raw = await response.text();
+  if (!response.ok) throw new Error(`Gemini API error: ${response.status} ${raw}`);
 
-  const part = candidate.content?.parts?.find(
-    (item): item is { text: string } => typeof item?.text === "string" && item.text.trim().length > 0
+  let data: GeminiResponse = raw ? JSON.parse(raw) : {};
+  const candidate = data.candidates?.[0];
+  const textPart = candidate?.content?.parts?.find(
+    (p): p is { text: string } => typeof (p as any)?.text === "string" && (p as any).text.trim()
   );
-
-  if (!part) {
-    throw new Error("Gemini API candidate is missing text content");
-  }
-
-  return part.text.trim();
+  if (!textPart?.text) throw new Error("Gemini API returned empty text");
+  return textPart.text.trim();
 }
 
 function getStringField(body: unknown, key: string): string | undefined {
