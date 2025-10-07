@@ -281,10 +281,20 @@ export default function ChatClient() {
             サインアウト
           </button>
         </div>
-        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] uppercase tracking-[0.2em] text-white/60">
-          <span>ログイン済み</span>
-          {stage && <span>Stage: {stage}</span>}
-          {sessionId && <span>ID: {sessionId}</span>}
+         <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] font-medium text-white/80">
+          <span className="rounded-full bg-white/10 px-3 py-1 uppercase tracking-[0.18em]">
+            ログイン済み
+          </span>
+          {stage && (
+            <span className="rounded-full bg-white/10 px-3 py-1 tracking-[0.08em]">
+              ステージ: {stage}
+            </span>
+          )}
+          {sessionId && (
+            <span className="rounded-full bg-white/10 px-3 py-1 tracking-[0.08em]">
+              セッションID: {sessionId}
+            </span>
+          )}
         </div>
       </header>
 

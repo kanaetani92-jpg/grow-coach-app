@@ -44,15 +44,29 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   const urlPath = path.startsWith("/") ? path : `/${path}`;
   const url = `${apiBase}${urlPath.startsWith("/") ? "" : "/"}${urlPath}`;
 
-  const res = await fetch(url, {
-    method,
-    headers,
-    body:
-      body !== undefined && method !== "GET" && method !== "HEAD"
-        ? JSON.stringify(body)
-        : undefined,
-    credentials: "include",
-  });
+    let res: Response;
+  try {
+    res = await fetch(url, {
+      method,
+      headers,
+      body:
+        body !== undefined && method !== "GET" && method !== "HEAD"
+          ? JSON.stringify(body)
+          : undefined,
+      credentials: "include",
+    });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    const connectionHelp = isFallbackApiBase
+      ?
+          "Next.js の `/api` プレースホルダーへアクセスできなかった可能性があります。" +
+        " `NEXT_PUBLIC_BACKEND_URL` (または `NEXT_PUBLIC_BACKEND_BASE_URL`) を設定して、正しいバックエンドを指すようにしてください。"
+      : `設定されているバックエンド (${trimmedBaseUrl || ""}) に接続できませんでした。ネットワークやサーバーの状態を確認してください。`;
+    throw new ApiError(
+      `バックエンド API への接続に失敗しました。(${reason}) ${connectionHelp}`.trim(),
+      0
+    );
+  }
 
   if (!res.ok) {
     let message: string;
