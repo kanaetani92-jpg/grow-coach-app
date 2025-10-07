@@ -133,6 +133,39 @@ export default function ChatClient() {
       } catch (error) {
         if (canceled) return;
 
+        if (error instanceof ApiError && error.status === 404) {
+          try {
+            const user = auth.currentUser;
+            if (!user) {
+              throw new Error("ログイン情報を取得できませんでした。");
+            }
+
+            let token = tokenRef.current;
+            if (!token) {
+              token = await user.getIdToken();
+              tokenRef.current = token;
+            }
+
+            if (!token) {
+              throw new Error("ログイン情報を取得できませんでした。");
+            }
+
+            const createWithToken = async (value: string) => createSession(value);
+            const session = await createWithToken(token).catch(async (creationError) => {
+              if (
+                creationError instanceof ApiError &&
+                creationError.status === 401 &&
+                auth.currentUser
+              ) {
+                token = await auth.currentUser.getIdToken(true);
+                tokenRef.current = token;
+                return await createWithToken(token);
+              }
+              throw creationError;
+            });
+
+            if (canceled) return;
+
             setSessionId(session.sessionId);
             setStage(session.stage);
             window.localStorage.setItem("currentSessionId", session.sessionId);
@@ -158,6 +191,7 @@ export default function ChatClient() {
               },
             ]);
             logEvent("history_restore_failed", {
+
               sessionId,
               message: `recreate_failed:${message}`,
             });
