@@ -15,7 +15,7 @@ const actionCodeSettings: ActionCodeSettings = {
 
 export default function EmailLinkForm() {
   const [email, setEmail] = useState("");
-  const [sending, setSending] = useState(false);
+    const [sending, setSending] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -40,7 +40,7 @@ export default function EmailLinkForm() {
   };
 
   return (
-    <form onSubmit={onSubmit} className="flex flex-col gap-3 max-w-md">
+    <form onSubmit={onSubmit} className="flex max-w-md flex-col gap-3">
       <label className="text-sm font-medium">
         メールアドレス
         <input
@@ -59,3 +59,10 @@ export default function EmailLinkForm() {
         className="rounded bg-black px-4 py-2 text-white disabled:opacity-60"
       >
         {sending ? "送信中..." : "ログインリンクを送信"}
+      </button>
+
+      {msg ? <p className="text-sm text-green-600">{msg}</p> : null}
+      {err ? <p className="text-sm text-red-600">{err}</p> : null}
+    </form>
+  );
+}
