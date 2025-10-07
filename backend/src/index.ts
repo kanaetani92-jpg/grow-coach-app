@@ -2,11 +2,15 @@ import http from "http";
 import { URL } from "url";
 import { existsSync, readFileSync } from "fs";
 import { resolve } from "path";
+import { randomBytes } from "crypto";
 
-import { verifyBearer, getUidFromAuthHeader } from "./auth.js";
+import { getUidFromAuthHeader } from "./auth.js";
 import { db } from "./db.js";
 
+loadEnvFile();
+
 type Msg = { role: "user" | "coach"; content: string; createdAt: number };
+type SessionCache = { messages: Msg[]; stage?: string };
 
 type RouteHandler = (context: RequestContext) => Promise<void> | void;
 
@@ -42,15 +46,21 @@ if (!globalFetch) {
 }
 const fetchFn: FetchFn = globalFetch;
 
-const memory: Record<string, Msg[]> = {};
-
-loadEnvFile();
+const memory = new Map<string, SessionCache>();
 
 const PORT = parseInt(process.env.PORT ?? "8080", 10);
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const RATE_LIMIT_MAX = parseInt(process.env.RATE_LIMIT_MAX ?? "60", 10);
+const RATE_LIMIT_WINDOW_MS = parseInt(
+  process.env.RATE_LIMIT_WINDOW_MS ?? "60000",
+  10
+);
+const allowedOrigins = parseAllowedOrigins(
+  process.env.ALLOWED_ORIGINS ?? "*"
+);
 
 if (!GEMINI_API_KEY) {
-  console.error("GEMINI_API_KEY is not set in .env or environment variables");
+  log("error", "missing GEMINI_API_KEY");
   process.exit(1);
 }
 
@@ -65,8 +75,10 @@ const routes: Record<string, RouteHandler> = {
   "GET /health": handleHealth,
   "POST /api/sessions": requireAuth(handleCreateSession),
   "POST /api/coach": requireAuth(handleCoach),
-  "GET /api/history": requireAuth(handleHistory)
+  "GET /api/history": requireAuth(handleHistory),
 };
+
+const rateLimitState = new Map<string, { count: number; expiresAt: number }>();
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -76,12 +88,17 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (!enforceRateLimit(req, res)) {
+      return;
+    }
+
     const method = req.method ?? "GET";
     const url = buildUrl(req);
     const routeKey = `${method.toUpperCase()} ${url.pathname}`;
     const handler = routes[routeKey];
 
     if (!handler) {
+      log("warn", "route_not_found", { route: routeKey });
       sendJson(res, 404, { error: "not found" });
       return;
     }
@@ -103,7 +120,7 @@ const server = http.createServer(async (req, res) => {
     const query = Object.fromEntries(url.searchParams.entries());
     await handler({ req, res, method, url, body, query });
   } catch (error) {
-    console.error("unhandled error", error);
+    log("error", "unhandled_error", { error: serializeError(error) });
     if (!res.headersSent) {
       sendJson(res, 500, { error: "internal server error" });
     } else {
@@ -113,7 +130,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(`listening on ${PORT}`);
+  log("info", "listening", { port: PORT });
 });
 
 function loadEnvFile() {
@@ -133,13 +150,14 @@ function loadEnvFile() {
       }
     }
   } catch (error) {
-    console.warn("failed to load .env file", error);
+    log("warn", "failed_to_load_env", { error: serializeError(error) });
   }
 }
 
 function applyCors(res: http.ServerResponse, req: http.IncomingMessage) {
-  const origin = req.headers.origin ?? "*";
-  res.setHeader("Access-Control-Allow-Origin", origin === "null" ? "*" : origin);
+  const originHeader = req.headers.origin ?? "";
+  const allowOrigin = resolveAllowedOrigin(originHeader, allowedOrigins);
+  res.setHeader("Access-Control-Allow-Origin", allowOrigin);
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.setHeader("Access-Control-Allow-Credentials", "true");
@@ -147,7 +165,8 @@ function applyCors(res: http.ServerResponse, req: http.IncomingMessage) {
 
 function buildUrl(req: http.IncomingMessage): URL {
   const host = req.headers.host ?? `localhost:${PORT}`;
-  const protocol = host.startsWith("localhost") || host.startsWith("127.0.0.1") ? "http" : "https";
+  const protocol =
+    host.startsWith("localhost") || host.startsWith("127.0.0.1") ? "http" : "https";
   return new URL(req.url ?? "/", `${protocol}://${host}`);
 }
 
@@ -158,7 +177,7 @@ async function readRequestBody(req: http.IncomingMessage): Promise<unknown> {
   const limit = 1_000_000; // 1MB
 
   return await new Promise((resolve, reject) => {
-    req.on("data", chunk => {
+    req.on("data", (chunk) => {
       const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       chunks.push(buf);
       const size = chunks.reduce((total, current) => total + current.length, 0);
@@ -185,7 +204,7 @@ function sendJson(res: http.ServerResponse, status: number, body: unknown) {
   if (!res.headersSent) {
     res.writeHead(status, {
       "Content-Type": "application/json; charset=utf-8",
-      "Content-Length": Buffer.byteLength(payload)
+      "Content-Length": Buffer.byteLength(payload),
     });
   }
   res.end(payload);
@@ -194,11 +213,13 @@ function sendJson(res: http.ServerResponse, status: number, body: unknown) {
 function requireAuth(
   handler: (context: RequestContext & { uid: string }) => Promise<void> | void
 ): RouteHandler {
-  return async context => {
+  return async (context) => {
     try {
       const uid = await getUidFromAuthHeader(context.req.headers.authorization);
       await handler({ ...context, uid });
     } catch (error) {
+      const err = error instanceof Error ? error.message : String(error);
+      log("warn", "auth_failed", { error: err });
       if (error instanceof Error && error.message === "missing bearer token") {
         sendJson(context.res, 401, { error: "missing bearer token" });
       } else {
@@ -216,10 +237,11 @@ function handleHealth({ res }: RequestContext) {
 }
 
 async function handleCreateSession({ uid, res }: RequestContext & { uid: string }) {
-  const sessionId = Math.random().toString(36).slice(2);
-  memory[sessionId] = [];
-
+  const sessionId = randomBytes(16).toString("hex");
   const now = Date.now();
+  const stage = "G";
+
+  memory.set(sessionId, { messages: [], stage });
 
   try {
     await db
@@ -227,12 +249,17 @@ async function handleCreateSession({ uid, res }: RequestContext & { uid: string 
       .doc(uid)
       .collection("sessions")
       .doc(sessionId)
-      .set({ createdAt: now, stage: "G", updatedAt: now }, { merge: true });
+      .set({ createdAt: now, stage, updatedAt: now }, { merge: true });
 
-    sendJson(res, 200, { sessionId, stage: "G" });
+    log("info", "session_created", { uid, sessionId });
+    sendJson(res, 200, { sessionId, stage });
   } catch (error) {
-    console.error("failed to create session", error);
-    delete memory[sessionId];
+    memory.delete(sessionId);
+    log("error", "failed_to_create_session", {
+      uid,
+      sessionId,
+      error: serializeError(error),
+    });
     sendJson(res, 500, { error: "failed to create session" });
   }
 }
@@ -246,10 +273,17 @@ async function handleCoach(context: RequestContext & { uid: string }) {
   }
 
   const sessionId = getStringField(body, "sessionId");
-  const userText = getStringField(body, "userText");
+  const userTextField =
+    getStringField(body, "userText") ?? getStringField(body, "message");
 
-  if (!sessionId || !userText) {
+  if (!sessionId || !userTextField) {
     sendJson(res, 400, { error: "invalid body" });
+    return;
+  }
+
+  const userText = sanitizeUserText(userTextField);
+  if (!userText) {
+    sendJson(res, 400, { error: "invalid text" });
     return;
   }
 
@@ -258,9 +292,11 @@ async function handleCoach(context: RequestContext & { uid: string }) {
 
     const parts = [
       { text: systemPrompt },
-      ...history.map(m => ({ text: `${m.role.toUpperCase()}: ${m.content}` })),
+      ...history.messages.map((m) => ({ text: `${m.role.toUpperCase()}: ${m.content}` })),
       { text: `USER: ${userText}` },
-      { text: 'JSONで {"stage":"G|R|O|W|Wrap|Review","message":"...","next_fields":["..."]} のみを返すこと。' }
+      {
+        text: 'JSONで {"stage":"G|R|O|W|Wrap|Review","message":"...","next_fields":["..."]} のみを返すこと。',
+      },
     ];
 
     const text = await generateGeminiContent(parts);
@@ -269,9 +305,10 @@ async function handleCoach(context: RequestContext & { uid: string }) {
     const userTimestamp = Date.now();
     const coachTimestamp = userTimestamp + 1;
 
-    history.push({ role: "user", content: userText, createdAt: userTimestamp });
-    history.push({ role: "coach", content: payload.message, createdAt: coachTimestamp });
-    memory[sessionId] = history;
+    const nextMessages = [...history.messages];
+    nextMessages.push({ role: "user", content: userText, createdAt: userTimestamp });
+    nextMessages.push({ role: "coach", content: payload.message, createdAt: coachTimestamp });
+    memory.set(sessionId, { messages: nextMessages, stage: payload.stage });
 
     const ref = db
       .collection("users")
@@ -286,9 +323,20 @@ async function handleCoach(context: RequestContext & { uid: string }) {
     batch.set(ref, { stage: payload.stage, updatedAt: coachTimestamp }, { merge: true });
     await batch.commit();
 
+    log("info", "coach_response", {
+      uid,
+      sessionId,
+      stage: payload.stage,
+      nextFields: payload.next_fields,
+    });
+
     sendJson(res, 200, payload);
   } catch (error) {
-    console.error("failed to process coach request", error);
+    log("error", "failed_to_process_coach_request", {
+      uid,
+      sessionId,
+      error: serializeError(error),
+    });
     sendJson(res, 500, { error: "failed to generate response" });
   }
 }
@@ -302,32 +350,43 @@ async function handleHistory(context: RequestContext & { uid: string }) {
   }
 
   try {
-    const messages = await loadHistory(uid, sessionId);
-    sendJson(res, 200, { messages });
+    const history = await loadHistory(uid, sessionId);
+    sendJson(res, 200, { messages: history.messages, stage: history.stage });
   } catch (error) {
-    console.error("failed to fetch history", error);
+    log("error", "failed_to_fetch_history", {
+      uid,
+      sessionId,
+      error: serializeError(error),
+    });
     sendJson(res, 500, { error: "failed to fetch history" });
   }
 }
 
-async function loadHistory(uid: string, sessionId: string): Promise<Msg[]> {
-  if (memory[sessionId]) return memory[sessionId];
+async function loadHistory(uid: string, sessionId: string): Promise<SessionCache> {
+  const cached = memory.get(sessionId);
+  if (cached) return cached;
 
-  const snapshot = await db
+  const sessionRef = db
     .collection("users")
     .doc(uid)
     .collection("sessions")
-    .doc(sessionId)
-    .collection("messages")
-    .orderBy("createdAt", "asc")
-    .get();
+    .doc(sessionId);
 
-  const items: Msg[] = snapshot.docs
-    .map(doc => doc.data() as Record<string, unknown>)
-    .map(data => ({
+  const [sessionSnapshot, messagesSnapshot] = await Promise.all([
+    sessionRef.get(),
+    sessionRef.collection("messages").orderBy("createdAt", "asc").get(),
+  ]);
+
+  const sessionData = sessionSnapshot.exists
+    ? (sessionSnapshot.data() as Record<string, unknown>)
+    : {};
+
+  const items: Msg[] = messagesSnapshot.docs
+    .map((doc) => doc.data() as Record<string, unknown>)
+    .map((data) => ({
       role: data.role,
       content: data.content,
-      createdAt: data.createdAt
+      createdAt: data.createdAt,
     }))
     .filter((data): data is Msg => {
       return (
@@ -337,8 +396,13 @@ async function loadHistory(uid: string, sessionId: string): Promise<Msg[]> {
       );
     });
 
-  memory[sessionId] = items;
-  return items;
+  const result: SessionCache = {
+    messages: items,
+    stage: typeof sessionData.stage === "string" ? sessionData.stage : undefined,
+  };
+
+  memory.set(sessionId, result);
+  return result;
 }
 
 async function generateGeminiContent(parts: Array<{ text: string }>): Promise<string> {
@@ -349,7 +413,7 @@ async function generateGeminiContent(parts: Array<{ text: string }>): Promise<st
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contents: [{ role: "user", parts }] })
+      body: JSON.stringify({ contents: [{ role: "user", parts }] }),
     }
   );
 
@@ -366,14 +430,18 @@ async function generateGeminiContent(parts: Array<{ text: string }>): Promise<st
 
   const content = candidates[0]?.content as Record<string, unknown> | undefined;
   const partsData = (content?.parts as Array<Record<string, unknown>> | undefined) ?? [];
-  const textPart = partsData.find(part => typeof part?.text === "string");
+  const textPart = partsData.find((part) => typeof part?.text === "string");
 
   const text = typeof textPart?.text === "string" ? textPart.text : undefined;
   if (!text) throw new Error("Gemini response missing text");
   return text;
 }
 
-function parseCoachPayload(text: string): { stage: string; message: string; next_fields: string[] } {
+function parseCoachPayload(text: string): {
+  stage: string;
+  message: string;
+  next_fields: string[];
+} {
   try {
     const data = JSON.parse(text) as Record<string, unknown>;
     const stage = data["stage"];
@@ -399,4 +467,93 @@ function getStringField(body: unknown, key: string): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed ? trimmed : undefined;
+}
+
+function sanitizeUserText(value: string): string {
+  const withoutControl = value.replace(/[\u0000-\u001F\u007F]+/g, "");
+  const withoutEmoji = withoutControl.replace(/[\p{Extended_Pictographic}]/gu, "");
+  const trimmed = withoutEmoji.trim();
+  if (trimmed.length === 0 || trimmed.length > 1000) {
+    return "";
+  }
+  return trimmed;
+}
+
+function parseAllowedOrigins(input: string): string[] {
+  return input
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+function resolveAllowedOrigin(origin: string, origins: string[]): string {
+  if (origins.includes("*")) {
+    return origin === "null" || origin === "" ? "*" : origin;
+  }
+
+  if (origin && origins.includes(origin)) {
+    return origin;
+  }
+
+  return origins[0] ?? "*";
+}
+
+function getClientIp(req: http.IncomingMessage): string {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (typeof forwarded === "string" && forwarded.length > 0) {
+    return forwarded.split(",")[0]!.trim();
+  }
+  if (Array.isArray(forwarded) && forwarded.length > 0) {
+    return forwarded[0]!.trim();
+  }
+  return req.socket.remoteAddress ?? "unknown";
+}
+
+function enforceRateLimit(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+  if (RATE_LIMIT_MAX <= 0) return true;
+
+  const ip = getClientIp(req);
+  const route = req.url ? req.url.split("?")[0] ?? "" : "";
+  const key = `${ip}:${route}`;
+  const now = Date.now();
+  const entry = rateLimitState.get(key);
+  if (!entry || now > entry.expiresAt) {
+    rateLimitState.set(key, { count: 1, expiresAt: now + RATE_LIMIT_WINDOW_MS });
+    return true;
+  }
+
+  entry.count += 1;
+  if (entry.count > RATE_LIMIT_MAX) {
+    log("warn", "rate_limited", { ip, route });
+    sendJson(res, 429, { error: "too many requests" });
+    return false;
+  }
+  return true;
+}
+
+function log(level: "info" | "warn" | "error", message: string, meta: Record<string, unknown> = {}) {
+  const payload = {
+    level,
+    message,
+    timestamp: new Date().toISOString(),
+    ...meta,
+  };
+  const text = JSON.stringify(payload);
+  if (level === "error") {
+    console.error(text);
+  } else if (level === "warn") {
+    console.warn(text);
+  } else {
+    console.log(text);
+  }
+}
+
+function serializeError(error: unknown): Record<string, unknown> {
+  if (error instanceof Error) {
+    return { name: error.name, message: error.message, stack: error.stack };
+  }
+  if (typeof error === "object" && error !== null) {
+    return error as Record<string, unknown>;
+  }
+  return { value: String(error) };
 }

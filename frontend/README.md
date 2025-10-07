@@ -1,36 +1,37 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Grow Coach Frontend
 
-## Getting Started
+Next.js アプリケーション。Firebase Authentication のメールリンク認証とバックエンド API を経由した AI コーチング体験を提供します。
 
-First, run the development server:
+## 開発環境の準備
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
+pnpm install
 pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`.env.local` に以下の環境変数を設定してください。
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+| 変数名 | 説明 |
+| --- | --- |
+| `NEXT_PUBLIC_FIREBASE_API_KEY` | Firebase Web API Key |
+| `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | Firebase Auth ドメイン (例: `your-project.firebaseapp.com`) |
+| `NEXT_PUBLIC_FIREBASE_PROJECT_ID` | Firebase プロジェクト ID |
+| `NEXT_PUBLIC_BACKEND_URL` | バックエンド API のベース URL (`/api` まで含む) |
+| `NEXT_PUBLIC_APP_ORIGIN` | メールリンクで使用するアプリ公開 URL (開発環境では `http://localhost:3000`) |
+| `NEXT_PUBLIC_LOG_ENDPOINT` (任意) | 追加のログ送信先エンドポイント |
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Firebase コンソールでは Identity Platform/Firebase Authentication の許可ドメインに、ローカル (`localhost`)、Vercel の Preview/Production ドメインなどアプリで利用するホストを追加してください。メールリンクテンプレートでは送信者名と返信先を設定し、案内文に「Grow Coach ログインリンク」であることを明記します。
 
-## Learn More
+## 主要機能
 
-To learn more about Next.js, take a look at the following resources:
+- メールリンクサインイン（期限切れ・無効リンクの判定、再送機能付き）
+- Firebase ID トークンを利用したセキュアな API 呼び出し（401 時のワンタイムリフレッシュ）
+- チャット UI（会話履歴の復元、新規セッション作成、送信制限・再試行ボタン・ローディング表示）
+- 利用規約/プライバシー/同意バナー
+- 送受信イベントの軽量ロギング
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 注意事項
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- メッセージは最大 800 文字まで。制御文字や絵文字は送信前に除去されます。
+- ブラウザのローカルストレージに `activeSessionId` と `emailForSignIn` を保存します。
+- バックエンド API エラー時はユーザー向けメッセージを表示し、再試行できます。
