@@ -1,6 +1,7 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import type { FormEvent } from "react";
+import { useState } from "react";
 import { ActionCodeSettings, sendSignInLinkToEmail } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import { getErrorMessage } from "@/lib/errors";
@@ -26,7 +27,7 @@ export default function EmailLinkForm() {
     setSending(true);
     try {
       await sendSignInLinkToEmail(auth, email, actionCodeSettings);
-      // 完了ページで取り出せるようにローカルに保持
+// 完了ページで取り出せるようにローカルに保持
       window.localStorage.setItem("emailForSignIn", email);
       setMsg("ログイン用リンクを送信しました。メールをご確認ください。");
     } catch (error: unknown) {
