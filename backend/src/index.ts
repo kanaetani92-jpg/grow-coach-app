@@ -594,7 +594,6 @@ function getClientIp(req: http.IncomingMessage): string {
     return forwarded.split(",")[0]!.trim();
   }
   if (Array.isArray(forwarded) && forwarded.length > 0) {
-@@ -520,26 +624,33 @@ function enforceRateLimit(req: http.IncomingMessage, res: http.ServerResponse):
 function log(level: "info" | "warn" | "error", message: string, meta: Record<string, unknown> = {}) {
   const payload = {
     level,
