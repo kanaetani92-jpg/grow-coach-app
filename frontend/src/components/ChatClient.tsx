@@ -48,7 +48,6 @@ export default function ChatClient() {
   );
   const tokenRef = useRef<string | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
-  const bottomRef = useRef<HTMLDivElement | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const shouldAutoScrollRef = useRef(true);
@@ -551,9 +550,8 @@ export default function ChatClient() {
   }
 
   return (
-    <section className="relative rounded-3xl border border-slate-200 bg-white text-base text-slate-900 shadow-sm">
-      <div className="flex min-h-[34rem] flex-col">
-        <header className="border-b border-slate-200 px-6 py-5 sm:px-8">
+    <section className="relative flex min-h-[34rem] flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white text-base text-slate-900 shadow-sm max-h-[calc(100vh-160px)]">
+      <header className="border-b border-slate-200 px-6 py-5 sm:px-8">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <p className="text-2xl font-semibold text-slate-900">Grow Coach</p>
@@ -598,7 +596,7 @@ export default function ChatClient() {
             </div>
           )}
         </header>
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden sm:flex-row">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden sm:flex-row">
           <aside className="flex min-h-0 w-full flex-shrink-0 flex-col border-b border-slate-200 bg-slate-50/80 sm:w-72 sm:border-b-0 sm:border-r sm:bg-white">
             <div className="space-y-4 px-5 py-5">
               <div>
@@ -778,7 +776,6 @@ export default function ChatClient() {
             </form>
           </div>
         </div>
-      </div>
       {toast && (
         <div
           role="status"
