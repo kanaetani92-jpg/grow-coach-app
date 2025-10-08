@@ -40,18 +40,36 @@ function getApiBase(): string {
 const API_BASE = getApiBase();
 
 async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    credentials: "include",
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init.headers || {}),
-    },
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      credentials: "include",
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...(init.headers || {}),
+      },
+    });
+  } catch (error) {
+    console.error("API request failed", error);
+    throw new ApiError(
+      0,
+      "サーバーに接続できませんでした。ネットワーク環境を確認して再試行してください。",
+    );
+  }
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new ApiError(res.status, text || res.statusText);
+    let message = text || res.statusText;
+    try {
+      const parsed = text ? JSON.parse(text) : null;
+      if (parsed && typeof parsed.message === "string") {
+        message = parsed.message;
+      }
+    } catch (error) {
+      console.warn("Failed to parse error response", error);
+    }
+    throw new ApiError(res.status, message);
   }
   return (await res.json()) as T;
 }

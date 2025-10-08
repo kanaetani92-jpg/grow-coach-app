@@ -2,41 +2,54 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ---- Theme (WhatsApp inspired palette) ---- */
-/* Tailwind の theme() は使わず、CSS 変数で色を一元管理 */
+/* ---- Theme ---- */
 :root {
-  --bg: #0b141a;
-  --card: #111b21;
-  --ink: #e9edef;
-  --ink-subtle: #8696a0;
-  --accent: #00a884;
-  --accent-strong: #075e54;
-  --accent-weak: #1f2c34;
+  --bg: #f8fafc;
+  --card: #ffffff;
+  --ink: #0f172a;
+  --ink-subtle: #475569;
+  --accent: #0f766e;
+  --accent-strong: #115e59;
+  --accent-soft: #ccfbf1;
 }
 
 /* ---- Document ---- */
-html, body { height: 100%; }
+html,
+body {
+  height: 100%;
+}
 
 body {
-  background: linear-gradient(160deg, #ecfdf5 0%, #d1fae5 100%);
+  background: var(--bg);
   color: var(--ink);
   font-size: 16px;
   line-height: 1.6;
-  font-feature-settings: "ss01","cv01";
+  font-feature-settings: "ss01", "cv01";
 }
 
 /* ---- Scrollbar ---- */
 /* Firefox */
-* { scrollbar-color: #6ee7b7 #d1fae5; scrollbar-width: thin; }
+* {
+  scrollbar-color: #5eead4 #e0f2f1;
+  scrollbar-width: thin;
+}
 /* WebKit */
-*::-webkit-scrollbar { width: 10px; height: 10px; }
-*::-webkit-scrollbar-thumb { background: #6ee7b7; border-radius: 9999px; } /* emerald-300 */
-*::-webkit-scrollbar-track { background: #d1fae5; }                        /* emerald-100 */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #14b8a6;
+  border-radius: 9999px;
+}
+*::-webkit-scrollbar-track {
+  background: #e0f2f1;
+}
 
 /* ---- Focus Ring ---- */
 :focus-visible {
-  outline: 3px solid #34d399;        /* emerald-400 */
-  outline-offset: 2px;
+  outline: 3px solid #0d9488;
+  outline-offset: 3px;
 }
 
 /* ---- Chat text helpers ---- */

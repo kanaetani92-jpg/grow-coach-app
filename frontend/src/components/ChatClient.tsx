@@ -42,7 +42,11 @@ export default function ChatClient() {
   const [historyHasMore, setHistoryHasMore] = useState(false);
   const [userName, setUserName] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastState>(null);
-
+  const [creatingSession, setCreatingSession] = useState(false);
+  const [sessionQuery, setSessionQuery] = useState("");
+  const [isOnline, setIsOnline] = useState<boolean>(() =>
+    typeof window === "undefined" ? true : window.navigator.onLine,
+  );
   const tokenRef = useRef<string | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -73,6 +77,23 @@ export default function ChatClient() {
       if (toastTimerRef.current) {
         clearTimeout(toastTimerRef.current);
       }
+    };
+  }, []);
+
+
+    useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const updateStatus = () => {
+      setIsOnline(window.navigator.onLine);
+    };
+
+    updateStatus();
+    window.addEventListener("online", updateStatus);
+    window.addEventListener("offline", updateStatus);
+    return () => {
+      window.removeEventListener("online", updateStatus);
+      window.removeEventListener("offline", updateStatus);
     };
   }, []);
 
@@ -114,6 +135,11 @@ export default function ChatClient() {
     setSessionsLoading(true);
     setSessionError(null);
     try {
+            if (!isOnline) {
+        throw new Error(
+          "オフラインのためセッションを取得できません。接続を確認して再試行してください。",
+        );
+      }
       const { sessions: fetched } = await callWithAuth((token) => listSessions(token));
       const ordered = [...fetched].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
       setSessions(ordered);
@@ -167,7 +193,7 @@ export default function ChatClient() {
     } finally {
       setSessionsLoading(false);
     }
-  }, [authed, callWithAuth, showToast]);
+    }, [authed, callWithAuth, showToast, isOnline]);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
@@ -396,6 +422,12 @@ export default function ChatClient() {
   );
 
   const handleCreateSession = useCallback(async () => {
+    if (creatingSession) return;
+    if (!isOnline) {
+      showToast("error", "オフラインのため新しいセッションを作成できません。接続を確認してください。");
+      return;
+    }
+    setCreatingSession(true);
     try {
       const created = await callWithAuth((token) => createSession(token));
       const now = Date.now();
@@ -421,8 +453,21 @@ export default function ChatClient() {
     } catch (error) {
       const message = getErrorMessage(error);
       showToast("error", `新しいセッションの作成に失敗しました: ${message}`);
-    }
-  }, [callWithAuth, showToast]);
+    }    } finally {
+      setCreatingSession(false);
+  }, [callWithAuth, showToast, creatingSession, isOnline]);
+
+  const hasSessions = sessions.length > 0;
+
+  const filteredSessions = useMemo(() => {
+    const query = sessionQuery.trim().toLowerCase();
+    if (!query) return sessions;
+    return sessions.filter((session) => {
+      const label = formatSessionLabel(session).toLowerCase();
+      const stage = (session.stage ?? "").toLowerCase();
+      return label.includes(query) || stage.includes(query) || session.sessionId.toLowerCase().includes(query);
+    });
+  }, [sessions, sessionQuery]);
 
   const quickActions = useMemo(
     () => ["今日のテーマを選ぶ", "目標を設定", "最近の出来事を振り返る"],
@@ -479,8 +524,9 @@ export default function ChatClient() {
       const message = getErrorMessage(error);
       setMessages((prev) =>
         prev.map((m) => (m.id === messageId ? { ...m, status: "error" } : m)),
-      );
-      pushAssistant(`エラー: ${message}`);
+      )
+      console.error("メッセージ送信に失敗しました", { error, message });
+      pushAssistant("メッセージの処理に失敗しました。時間をおいて再試行してください。");
       showToast("error", "メッセージの送信に失敗しました。もう一度お試しください。");
     } finally {
       setLoading(false);
@@ -488,221 +534,320 @@ export default function ChatClient() {
   }, [callWithAuth, pushAssistant, restoring, showToast, updateSessionMeta, input]);
 
   if (!authed) {
-    return <p className="text-sm opacity-80">ログインリンクでサインインするとチャットが有効になります。</p>;
+    return (
+      <section className="rounded-3xl border border-slate-200 bg-white p-6 text-slate-900 shadow-sm">
+        <div className="flex min-h-[16rem] flex-col items-center justify-center gap-3 text-center">
+          <p className="text-base font-medium text-slate-800">
+            サインインするとセッションの一覧とチャットが表示されます。
+          </p>
+          <p className="text-sm text-slate-600">
+            左側のカードからメールリンクを送信し、ログインを完了してください。
+          </p>
+        </div>
+      </section>
+    );
   }
 
   return (
-    <div className="relative flex min-h-[34rem] flex-col overflow-hidden rounded-[32px] border border-slate-200 bg-white text-base text-slate-900 shadow-2xl shadow-slate-900/20 sm:flex-row">
-      <aside className="flex min-h-0 w-full flex-shrink-0 flex-col border-b border-slate-200 bg-slate-900/95 text-slate-100 sm:w-64 sm:border-b-0 sm:border-r">
-        <div className="flex items-center justify-between gap-2 px-5 py-4">
-          <h2 className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-300">セッション</h2>
-          <button
-            type="button"
-            onClick={handleCreateSession}
-            className="inline-flex items-center gap-1 rounded-full bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-slate-900 transition hover:bg-emerald-400"
-          >
-            新規
-          </button>
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-4">
-          {sessionsLoading ? (
-            <p className="px-2 text-xs text-slate-400">セッションを読み込んでいます...</p>
-          ) : sessionError ? (
-            <p className="px-2 text-xs text-rose-200">{sessionError}</p>
-          ) : sessions.length === 0 ? (
-            <p className="px-2 text-xs text-slate-400">セッションはまだありません。</p>
-          ) : (
-            <ul className="space-y-2">
-              {sessions.map((session) => {
-                const active = session.sessionId === sessionIdRef.current;
-                return (
-                  <li key={session.sessionId}>
-                    <button
-                      type="button"
-                      onClick={() => handleSelectSession(session.sessionId)}
-                      className={`w-full rounded-2xl px-3 py-2 text-left text-sm transition ${
-                        active
-                          ? "bg-emerald-500/15 text-emerald-100 ring-1 ring-emerald-400"
-                          : "bg-slate-800/60 text-slate-200 hover:bg-slate-800"
-                      }`}
-                    >
-                      <div className="font-semibold">{formatSessionLabel(session)}</div>
-                      <div className="mt-1 flex items-center justify-between text-xs text-slate-400">
-                        <span>ステージ: {session.stage ?? "-"}</span>
-                        <span>{formatRelativeTime(session.updatedAt ?? session.createdAt)}</span>
-                      </div>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
-      </aside>
-
-      <div className="flex min-h-0 flex-1 flex-col">
-        <header className="sticky top-0 z-10 flex flex-col gap-4 border-b border-slate-200 bg-white/95 px-6 py-4 backdrop-blur sm:px-8">
+    <section className="relative rounded-3xl border border-slate-200 bg-white text-base text-slate-900 shadow-sm">
+      <div className="flex min-h-[34rem] flex-col">
+        <header className="border-b border-slate-200 px-6 py-5 sm:px-8">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
-              <p className="text-xl font-semibold tracking-tight text-slate-900">Grow Coach</p>
-              <p className="text-sm text-slate-500">コーチと一緒に次のアクションを決めましょう</p>
+              <p className="text-2xl font-semibold text-slate-900">Grow Coach</p>
+              <p className="mt-1 text-sm text-slate-600">コーチと一緒に次のアクションを決めましょう。</p>
             </div>
-            <div className="flex items-center gap-3">
-              <div className="hidden text-sm text-slate-500 sm:block">{userName ?? "サインイン済み"}</div>
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={handleCreateSession}
+                className="inline-flex items-center gap-2 rounded-full bg-teal-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+                aria-label="新規セッションを開始"
+                disabled={creatingSession}
+              >
+                <span aria-hidden="true" className="text-lg leading-none">
+                  ＋
+                </span>
+                新規セッション
+              </button>
+              <div className="hidden text-sm text-slate-500 sm:block" aria-live="polite">
+                {userName ?? "サインイン済み"}
+              </div>
               <button
                 type="button"
                 onClick={() => signOut(auth)}
-                className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
+                className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2"
+                aria-label="ログアウト"
               >
-                <span aria-hidden="true" className="text-lg leading-none">⎋</span>
+                <span aria-hidden="true" className="text-lg leading-none">
+                  ⎋
+                </span>
                 ログアウト
               </button>
             </div>
           </div>
+          {!isOnline && (
+            <div
+              className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700"
+              role="status"
+              aria-live="polite"
+            >
+              オフラインです。接続が回復すると自動的に再同期します。
+            </div>
+          )}
         </header>
-
-        <div className="flex min-h-0 flex-1 flex-col bg-slate-50/80">
-          <div ref={scrollerRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-6">
-            {historyHasMore ? (
-              <div className="flex justify-center text-xs text-slate-400">
-                {loadingMore ? "過去のメッセージを読み込んでいます..." : "上にスクロールするとさらに表示されます"}
+        <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
+          <aside className="flex min-h-0 w-full flex-shrink-0 flex-col border-b border-slate-200 bg-slate-50/80 sm:w-72 sm:border-b-0 sm:border-r sm:bg-white">
+            <div className="space-y-4 px-5 py-5">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900">セッション</h2>
+                <p className="text-xs text-slate-500">過去のやり取りを一覧で確認できます。</p>
               </div>
-            ) : null}
-            {messages.length === 0 ? (
-              <div className="flex h-full flex-col items-center justify-center gap-6 text-center text-slate-600">
-                <p className="rounded-2xl bg-white px-5 py-3 text-base shadow-sm">
-                  {restoring ? "会話履歴を読み込んでいます..." : "コーチに相談したい内容を入力して会話を始めましょう。"}
-                </p>
-                <div className="flex flex-wrap items-center justify-center gap-3">
-                  {quickActions.map((action) => (
-                    <button
-                      key={action}
-                      type="button"
-                      onClick={() => {
-                        setInput(action);
-                        showToast("success", `${action} を入力欄にセットしました。`);
-                      }}
-                      className="rounded-full border border-emerald-200 bg-white px-4 py-2 text-sm font-medium text-emerald-700 transition hover:border-emerald-300 hover:bg-emerald-50"
-                    >
-                      {action}
-                    </button>
+              <div className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm shadow-sm focus-within:border-teal-500 focus-within:ring-2 focus-within:ring-teal-100">
+                <label htmlFor="session-search" className="sr-only">
+                  セッションを検索
+                </label>
+                <input
+                  id="session-search"
+                  type="search"
+                  value={sessionQuery}
+                  onChange={(event) => setSessionQuery(event.target.value)}
+                  placeholder="セッションを検索"
+                  className="w-full bg-transparent text-slate-900 placeholder:text-slate-400 focus:outline-none"
+                />
+              </div>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
+              {sessionsLoading ? (
+                <ul className="space-y-3" aria-live="polite">
+                  {Array.from({ length: 4 }).map((_, index) => (
+                    <li key={index} className="h-16 animate-pulse rounded-2xl bg-slate-200/70" />
                   ))}
+                </ul>
+              ) : sessionError ? (
+                <div
+                  className="space-y-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-xs text-amber-700"
+                  aria-live="assertive"
+                >
+                  <p>{sessionError}</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void refreshSessions();
+                    }}
+                    className="inline-flex items-center gap-2 rounded-full border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-700 transition hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2"
+                    aria-label="セッション一覧を再読み込み"
+                  >
+                    <span aria-hidden="true">↻</span>
+                    再試行
+                  </button>
                 </div>
-              </div>
-            ) : (
-              <ul className="space-y-4">
-                {messages.map((message) => (
-                  <li key={message.id} className="flex items-end gap-3">
-                    {message.role === "assistant" && (
-                      <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-emerald-600 text-sm font-semibold text-white shadow-sm">
-                        GC
-                      </div>
-                    )}
-                    <div
-                      className={`max-w-[70%] rounded-3xl px-5 py-3 shadow-sm ${
-                        message.role === "user"
-                          ? "ml-auto bg-emerald-50 text-emerald-900"
-                          : "bg-white text-slate-900 border border-slate-200"
-                      }`}
+              ) : filteredSessions.length === 0 ? (
+                <div className="flex flex-col items-center gap-4 rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-6 text-center text-sm text-slate-600">
+                  <p>
+                    {hasSessions
+                      ? "該当するセッションが見つかりません。検索条件を変更してください。"
+                      : "まだセッションがありません。最初のセッションを作成しましょう。"}
+                  </p>
+                  {hasSessions ? (
+                    <button
+                      type="button"
+                      onClick={() => setSessionQuery("")}
+                      className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2"
                     >
-                      <p className="chat-text text-[15px] leading-relaxed">{message.content}</p>
+                      条件をクリア
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleCreateSession}
+                      className="inline-flex items-center gap-2 rounded-full bg-teal-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+                      disabled={creatingSession}
+                      aria-label="新しいセッションを作成"
+                    >
+                      <span aria-hidden="true" className="text-lg leading-none">
+                        ＋
+                      </span>
+                      新規セッション
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <ul className="space-y-2">
+                  {filteredSessions.map((session) => {
+                    const active = session.sessionId === sessionIdRef.current;
+                    return (
+                      <li key={session.sessionId}>
+                        <button
+                          type="button"
+                          onClick={() => handleSelectSession(session.sessionId)}
+                          className={`w-full rounded-2xl border px-4 py-3 text-left text-sm transition ${
+                            active
+                              ? "border-teal-500 bg-teal-50 text-teal-900 shadow-sm"
+                              : "border-transparent bg-white text-slate-700 hover:border-slate-200 hover:bg-slate-50"
+                          }`}
+                          aria-current={active ? "true" : undefined}
+                        >
+                          <div className="font-semibold">{formatSessionLabel(session)}</div>
+                          <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
+                            <span>ステージ: {session.stage ?? "-"}</span>
+                            <span>{formatRelativeTime(session.updatedAt ?? session.createdAt)}</span>
+                          </div>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          </aside>
+          <div className="flex min-h-0 flex-1 flex-col bg-slate-50">
+            <div ref={scrollerRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-6">
+              {historyHasMore ? (
+                <div className="flex justify-center text-xs text-slate-500" aria-live="polite">
+                  {loadingMore ? "過去のメッセージを読み込んでいます..." : "上にスクロールするとさらに表示されます"}
+                </div>
+              ) : null}
+              {messages.length === 0 ? (
+                <div className="flex h-full flex-col items-center justify-center gap-6 text-center text-slate-600">
+                  <p className="rounded-2xl border border-slate-200 bg-white px-5 py-4 text-base shadow-sm">
+                    {restoring ? "会話履歴を読み込んでいます..." : "コーチに相談したい内容を入力して会話を始めましょう。"}
+                  </p>
+                  <div className="flex flex-wrap items-center justify-center gap-3">
+                    {quickActions.map((action) => (
+                      <button
+                        key={action}
+                        type="button"
+                        onClick={() => {
+                          setInput(action);
+                          showToast("success", `${action} を入力欄にセットしました。`);
+                        }}
+                        className="rounded-full border border-teal-200 bg-white px-4 py-2 text-sm font-medium text-teal-700 transition hover:border-teal-300 hover:bg-teal-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2"
+                      >
+                        {action}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <ul className="space-y-4" aria-live="polite">
+                  {messages.map((message) => (
+                    <li key={message.id} className="flex items-end gap-3">
+                      {message.role === "assistant" && (
+                        <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-teal-600 text-sm font-semibold text-white shadow-sm">
+                          GC
+                        </div>
+                      )}
                       <div
-                        className={`mt-2 flex items-center gap-2 text-[11px] ${
+                        className={`max-w-[70%] rounded-3xl px-5 py-3 shadow-sm ${
                           message.role === "user"
-                            ? "justify-end text-emerald-900/70"
-                            : "justify-start text-slate-500"
+                            ? "ml-auto bg-teal-600 text-white"
+                            : "border border-slate-200 bg-white text-slate-900"
                         }`}
                       >
-                        <span>{formatTimestamp(message.createdAt)}</span>
-                        {message.role === "user" && (
-                          <span>
-                            {message.status === "error"
-                              ? "エラー"
-                              : message.status === "read"
-                                ? "既読"
-                                : message.status === "sent"
-                                  ? "送信済み"
-                                  : "送信中"}
-                          </span>
-                        )}
+                        <p className="chat-text text-[15px] leading-relaxed">{message.content}</p>
+                        <div
+                          className={`mt-2 flex items-center gap-2 text-[11px] ${
+                            message.role === "user"
+                              ? "justify-end text-white/80"
+                              : "justify-start text-slate-500"
+                          }`}
+                        >
+                          <span>{formatTimestamp(message.createdAt)}</span>
+                          {message.role === "user" && (
+                            <span>
+                              {message.status === "error"
+                                ? "エラー"
+                                : message.status === "read"
+                                  ? "既読"
+                                  : message.status === "sent"
+                                    ? "送信済み"
+                                    : "送信中"}
+                            </span>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                    {message.role === "user" && (
-                      <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white shadow-sm">
-                        {userInitial}
+                      {message.role === "user" && (
+                        <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white shadow-sm">
+                          {userInitial}
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                  {loading && (
+                    <li className="flex items-center gap-3 text-slate-500">
+                      <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-teal-600 text-sm font-semibold text-white shadow-sm">
+                        GC
                       </div>
-                    )}
-                  </li>
-                ))}
-                {loading && (
-                  <li className="flex items-center gap-3 text-slate-500">
-                    <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-emerald-600 text-sm font-semibold text-white shadow-sm">
-                      GC
-                    </div>
-                    <span className="inline-flex items-center gap-2 rounded-2xl bg-white px-4 py-2 text-sm shadow-sm">
-                      <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-emerald-400" />
-                      考え中…
-                    </span>
-                  </li>
-                )}
-                <div ref={bottomRef} />
-              </ul>
-            )}
-          </div>
-
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              onSend();
-            }}
-            className="safe-bottom sticky bottom-0 border-t border-slate-200 bg-white/95 px-6 py-4 backdrop-blur"
-          >
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center gap-3">
-                <div className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm focus-within:border-emerald-400 focus-within:ring-2 focus-within:ring-emerald-100">
-                  <textarea
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        e.preventDefault();
-                        onSend();
-                      }
-                    }}
-                    className="h-20 w-full resize-none bg-transparent text-[15px] text-slate-900 placeholder:text-slate-400 focus:outline-none"
-                    placeholder="メッセージを入力"
-                    disabled={loading || restoring}
-                    aria-label="メッセージを入力"
-                    maxLength={5000}
-                  />
-                </div>
-                <button
-                  type="submit"
-                  disabled={loading || restoring || input.trim().length === 0}
-                  className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-emerald-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-emerald-600/30 transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {loading ? "送信中" : "送信"}
-                </button>
-              </div>
-              <p className="text-xs text-slate-500">Enterで送信／Shift + Enterで改行（最大5000文字）</p>
+                      <span className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm shadow-sm">
+                        <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-teal-400" />
+                        考え中…
+                      </span>
+                    </li>
+                  )}
+                  <div ref={bottomRef} />
+                </ul>
+              )}
             </div>
-          </form>
-        </div>
-
-        {toast && (
-          <div
-            role="status"
-            className={`pointer-events-none absolute left-1/2 top-4 -translate-x-1/2 rounded-full px-4 py-2 text-sm shadow-lg ${
-              toast.type === "success"
-                ? "bg-emerald-600 text-white"
-                : "bg-rose-600 text-white"
-            }`}
-          >
-            {toast.message}
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                onSend();
+              }}
+              className="safe-bottom sticky bottom-0 border-t border-slate-200 bg-white/95 px-6 py-4 backdrop-blur"
+            >
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 rounded-2xl border border-slate-300 bg-white px-4 py-3 shadow-sm focus-within:border-teal-500 focus-within:ring-2 focus-within:ring-teal-100">
+                    <label htmlFor="chat-input" className="sr-only">
+                      メッセージを入力
+                    </label>
+                    <textarea
+                      id="chat-input"
+                      value={input}
+                      onChange={(event) => setInput(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" && !event.shiftKey) {
+                          event.preventDefault();
+                          onSend();
+                        }
+                      }}
+                      className="h-24 w-full resize-none bg-transparent text-[15px] text-slate-900 placeholder:text-slate-400 focus:outline-none"
+                      placeholder="メッセージを入力"
+                      disabled={loading || restoring}
+                      aria-label="メッセージを入力"
+                      maxLength={5000}
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={loading || restoring || input.trim().length === 0}
+                    className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-teal-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-teal-600/30 transition hover:bg-teal-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+                    aria-label="メッセージを送信"
+                  >
+                    {loading ? "送信中" : "送信"}
+                  </button>
+                </div>
+                <p className="text-xs text-slate-500">Enterで送信／Shift + Enterで改行（最大5000文字）</p>
+              </div>
+            </form>
           </div>
-        )}
+        </div>
       </div>
-    </div>
+      {toast && (
+        <div
+          role="status"
+          aria-live="polite"
+          className={`pointer-events-none absolute left-1/2 top-4 -translate-x-1/2 rounded-full px-4 py-2 text-sm shadow-lg ${
+            toast.type === "success"
+              ? "bg-teal-600 text-white"
+              : "bg-rose-600 text-white"
+          }`}
+        >
+          {toast.message}
+        </div>
+      )}
+    </section>
   );
 }
 
