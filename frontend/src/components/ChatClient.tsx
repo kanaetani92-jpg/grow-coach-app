@@ -647,7 +647,7 @@ export default function ChatClient() {
             <div
               ref={scrollerRef}
               className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-6"
-            ></div>
+            >
               {historyHasMore ? (
                 <div className="flex justify-center text-xs text-slate-500" aria-live="polite">
                   {loadingMore ? "過去のメッセージを読み込んでいます..." : "上にスクロールするとさらに表示されます"}
