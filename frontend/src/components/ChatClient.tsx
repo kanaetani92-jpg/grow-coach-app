@@ -43,7 +43,6 @@ export default function ChatClient() {
   const [userName, setUserName] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastState>(null);
   const [creatingSession, setCreatingSession] = useState(false);
-  const [sessionQuery, setSessionQuery] = useState("");
   const [isOnline, setIsOnline] = useState<boolean>(() =>
     typeof window === "undefined" ? true : window.navigator.onLine,
   );
@@ -458,22 +457,11 @@ export default function ChatClient() {
     }
   }, [callWithAuth, showToast, creatingSession, isOnline]);
 
-
-  const filteredSessions = useMemo(() => {
-    const query = sessionQuery.trim().toLowerCase();
-    if (!query) return sessions;
-    return sessions.filter((session) => {
-      const label = formatSessionLabel(session).toLowerCase();
-      const stage = (session.stage ?? "").toLowerCase();
-      return label.includes(query) || stage.includes(query) || session.sessionId.toLowerCase().includes(query);
-    });
-  }, [sessions, sessionQuery]);
-
-    const activeSessionId = sessionIdRef.current;
+  const activeSessionId = sessionIdRef.current;
   const sessionSelectValue = useMemo(() => {
     if (!activeSessionId) return "";
-    return filteredSessions.some((session) => session.sessionId === activeSessionId) ? activeSessionId : "";
-  }, [activeSessionId, filteredSessions]);
+    return sessions.some((session) => session.sessionId === activeSessionId) ? activeSessionId : "";
+  }, [activeSessionId, sessions]);
   const quickActions = useMemo(
     () => ["今日のテーマを選ぶ", "目標を設定", "最近の出来事を振り返る"],
     [],
@@ -608,20 +596,7 @@ export default function ChatClient() {
                 <h2 className="text-base font-semibold text-slate-900">セッション</h2>
                 <p className="text-xs text-slate-500">過去のやり取りを一覧で確認できます。</p>
               </div>
-              <div className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm shadow-sm focus-within:border-teal-500 focus-within:ring-2 focus-within:ring-teal-100">
-                <label htmlFor="session-search" className="sr-only">
-                  セッションを検索
-                </label>
-                <input
-                  id="session-search"
-                  type="search"
-                  value={sessionQuery}
-                  onChange={(event) => setSessionQuery(event.target.value)}
-                  placeholder="セッションを検索"
-                  className="w-full bg-transparent text-slate-900 placeholder:text-slate-400 focus:outline-none"
-                />
-              </div>
-              {!sessionsLoading && !sessionError && filteredSessions.length > 0 ? (
+              {!sessionsLoading && !sessionError && sessions.length > 0 ? (
                 <div>
                   <label htmlFor="session-select" className="mb-1 block text-xs font-medium text-slate-500">
                     過去のセッションを選択
@@ -642,7 +617,7 @@ export default function ChatClient() {
                       <option value="" disabled>
                         セッションを選択
                       </option>
-                      {filteredSessions.map((session) => {
+                      {sessions.map((session) => {
                         const label = formatSessionLabel(session);
                         const stageLabel = `ステージ: ${session.stage ?? "-"}`;
                         const relative = formatRelativeTime(session.updatedAt ?? session.createdAt);
@@ -657,7 +632,7 @@ export default function ChatClient() {
                 </div>
               ) : null}
             </div>
-                        {/* 過去のセッション一覧はプルダウンのみ表示する仕様に変更したため非表示 */}
+            {/* 過去のセッション一覧はプルダウンのみ表示する仕様に変更したため非表示 */}
           </aside>
           <div className="flex min-h-0 flex-1 flex-col bg-slate-50">
             <div ref={scrollerRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-6">
