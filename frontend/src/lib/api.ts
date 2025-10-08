@@ -1,6 +1,3 @@
-+9
--1
-
 // frontend/src/lib/api.ts
 export class ApiError extends Error {
   status: number;
@@ -16,6 +13,13 @@ export type HistoryMessage = {
   createdAt: number;
   stage?: string;
   next_fields?: string[];
+};
+
+export type SessionSummary = {
+  sessionId: string;
+  stage?: string;
+  createdAt?: number;
+  updatedAt?: number;
 };
 
 function getApiBase(): string {
@@ -62,6 +66,15 @@ export async function createSession(
   });
 }
 
+export async function listSessions(
+  idToken: string
+): Promise<{ sessions: SessionSummary[] }> {
+  return apiFetch("/sessions", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${idToken}` },
+  });
+}
+
 export async function callCoach(
   payload: { sessionId: string; userText: string },
   idToken: string
@@ -75,10 +88,17 @@ export async function callCoach(
 
 export async function fetchHistory(
   sessionId: string,
-  idToken: string
-): Promise<{ stage?: string; messages: HistoryMessage[] }> {
-  const qs = new URLSearchParams({ sessionId }).toString();
-  return apiFetch(`/history?${qs}`, {
+  idToken: string,
+  options: { before?: number; limit?: number } = {},
+): Promise<{ stage?: string; messages: HistoryMessage[]; hasMore: boolean; cursor?: number }> {
+  const params = new URLSearchParams({ sessionId });
+  if (typeof options.before === "number") {
+    params.set("before", String(options.before));
+  }
+  if (typeof options.limit === "number") {
+    params.set("limit", String(options.limit));
+  }
+  return apiFetch(`/history?${params.toString()}`, {
     method: "GET",
     headers: { Authorization: `Bearer ${idToken}` },
   });

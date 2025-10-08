@@ -98,6 +98,7 @@ function handleHealth({ res }: RequestContext) {
 const routes: Record<string, RouteHandler> = {
   "GET /health": handleHealth,
   "POST /api/sessions": requireAuth(handleCreateSession),
+  "GET /api/sessions": requireAuth(handleListSessions),
   "POST /api/coach": requireAuth(handleCoach),
   "GET /api/history": requireAuth(handleHistory),
   "GET /api": handleApiRoot,
@@ -290,9 +291,43 @@ function handleApiRoot({ res }: RequestContext) {
   sendJson(res, 200, {
     ok: true,
     name: "grow-backend",
-    endpoints: ["/api/sessions (POST)", "/api/coach (POST)", "/api/history (GET)"],
+    endpoints: [
+      "/api/sessions (POST)",
+      "/api/sessions (GET)",
+      "/api/coach (POST)",
+      "/api/history (GET)",
+    ],
     time: new Date().toISOString(),
   });
+}
+
+async function handleListSessions({ uid, res }: RequestContext & { uid: string }) {
+  try {
+    const snapshot = await db
+      .collection("users")
+      .doc(uid)
+      .collection("sessions")
+      .orderBy("updatedAt", "desc")
+      .limit(50)
+      .get();
+
+    const sessions = snapshot.docs.map((doc) => {
+      const data = doc.data() as Record<string, unknown>;
+      const createdAt = typeof data.createdAt === "number" ? data.createdAt : undefined;
+      const updatedAt = typeof data.updatedAt === "number" ? data.updatedAt : createdAt;
+      return {
+        sessionId: doc.id,
+        stage: parseStage(data.stage),
+        createdAt,
+        updatedAt,
+      };
+    });
+
+    sendJson(res, 200, { sessions });
+  } catch (error) {
+    log("error", "failed_to_list_sessions", { uid, error: serializeError(error) });
+    sendJson(res, 500, { error: "failed to list sessions" });
+  }
 }
 
 async function handleCreateSession({ uid, res }: RequestContext & { uid: string }) {
@@ -420,9 +455,29 @@ async function handleHistory(context: RequestContext & { uid: string }) {
     return;
   }
 
+  const limitRaw = Array.isArray(query["limit"]) ? query["limit"][0] : query["limit"];
+  const beforeRaw = Array.isArray(query["before"]) ? query["before"][0] : query["before"];
+
+  const limit = clampLimit(parseInt(String(limitRaw ?? "30"), 10));
+  const beforeParsed = beforeRaw !== undefined ? parseInt(String(beforeRaw), 10) : undefined;
+  const before = Number.isFinite(beforeParsed) ? (beforeParsed as number) : undefined;
+
   try {
     const history = await loadHistory(uid, sessionId);
-    sendJson(res, 200, history);
+    const sorted = history.messages.slice().sort((a, b) => a.createdAt - b.createdAt);
+    const filtered = typeof before === "number"
+      ? sorted.filter((item) => item.createdAt < before)
+      : sorted;
+    const slice = limit > 0 ? filtered.slice(-limit) : filtered;
+    const hasMore = slice.length < filtered.length;
+    const cursor = hasMore ? slice[0]?.createdAt : undefined;
+
+    sendJson(res, 200, {
+      stage: history.stage,
+      messages: slice,
+      hasMore,
+      cursor,
+    });
   } catch (error) {
     log("error", "failed_to_fetch_history", {
       uid,
@@ -431,6 +486,16 @@ async function handleHistory(context: RequestContext & { uid: string }) {
     });
     sendJson(res, 500, { error: "failed to fetch history" });
   }
+}
+
+function clampLimit(raw: number): number {
+  if (!Number.isFinite(raw) || raw <= 0) {
+    return 30;
+  }
+  if (raw > 100) {
+    return 100;
+  }
+  return Math.floor(raw);
 }
 
 async function loadHistory(uid: string, sessionId: string): Promise<SessionCache> {

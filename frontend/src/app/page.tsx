@@ -12,9 +12,6 @@ export default function Page() {
               <h1 className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">
                 アイコチ（GROW編）
               </h1>
-              <p className="mt-2 text-sm text-[#8696a0]">
-                メールリンクでログインして、コーチとの会話を開始しましょう。
-              </p>
             </div>
             <SignInPanel />
           </div>
