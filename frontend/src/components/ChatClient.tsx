@@ -453,7 +453,9 @@ export default function ChatClient() {
     } catch (error) {
       const message = getErrorMessage(error);
       showToast("error", `新しいセッションの作成に失敗しました: ${message}`);
-    }    } finally {
+    } finally {
+      setCreatingSession(false);
+    }
       setCreatingSession(false);
   }, [callWithAuth, showToast, creatingSession, isOnline]);
 
