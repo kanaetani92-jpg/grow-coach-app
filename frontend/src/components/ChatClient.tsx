@@ -901,10 +901,58 @@ function formatNextFieldLabel(field: string): string {
   return restLabel || field;
 }
 
+const TRAILING_CLOSERS = new Set([
+  "'",
+  "\"",
+  "’",
+  "”",
+  "）",
+  ")",
+  "］",
+  "]",
+  "｝",
+  "}",
+  "〉",
+  "》",
+  "】",
+  "」",
+  "』",
+]);
+
+function trimTrailingClosers(value: string): string {
+  let end = value.length;
+  while (end > 0 && TRAILING_CLOSERS.has(value[end - 1])) {
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
+
+function shouldDisplayNextFields(message: string, nextFields: string[]): boolean {
+  if (nextFields.length === 0) {
+    return false;
+  }
+  const trimmed = message.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  const withoutClosers = trimTrailingClosers(trimmed);
+  if (!withoutClosers) {
+    return false;
+  }
+
+  const lastChar = withoutClosers.charAt(withoutClosers.length - 1);
+  if (lastChar === "?" || lastChar === "？") {
+    return false;
+  }
+
+  return true;
+}
+
 function formatAssistantMessage(message: string, nextFields: string[]): string {
   const lines: string[] = [];
   lines.push(message);
-  if (nextFields.length > 0) {
+  if (shouldDisplayNextFields(message, nextFields)) {
     lines.push("次に確認したい項目:");
     lines.push(...nextFields.map((field) => `・${formatNextFieldLabel(field)}`));
   }
