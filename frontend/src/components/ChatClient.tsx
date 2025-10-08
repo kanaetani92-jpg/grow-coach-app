@@ -16,7 +16,7 @@ import { getErrorMessage } from "@/lib/errors";
 import { logEvent } from "@/lib/logger";
 
 const HISTORY_PAGE_SIZE = 25;
-
+const MAX_MESSAGE_LENGTH = 5000;
 type Msg = {
   id: string;
   role: "user" | "assistant";
@@ -52,6 +52,11 @@ export default function ChatClient() {
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const shouldAutoScrollRef = useRef(true);
+  const scrollToBottom = useCallback(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
+  }, []);
 
   const userInitial = useMemo(() => {
     if (!userName) return "U";
@@ -229,8 +234,8 @@ export default function ChatClient() {
 
   useEffect(() => {
     if (!shouldAutoScrollRef.current) return;
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages, loading]);
+    scrollToBottom();
+  }, [messages, loading, scrollToBottom]);
 
   const pushAssistant = useCallback((text: string, createdAt?: number) => {
     shouldAutoScrollRef.current = true;
@@ -466,11 +471,15 @@ export default function ChatClient() {
     () => ["今日のテーマを選ぶ", "目標を設定", "最近の出来事を振り返る"],
     [],
   );
+  const remainingChars = useMemo(
+    () => Math.max(0, MAX_MESSAGE_LENGTH - input.length),
+    [input],
+  );
 
   const onSend = useCallback(async () => {
     const msg = input.trim();
     if (!msg || restoring) return;
-    if (msg.length > 5000) {
+    if (msg.length > MAX_MESSAGE_LENGTH) {
       showToast("error", "メッセージは5000文字以内で入力してください。");
       return;
     }
@@ -511,8 +520,8 @@ export default function ChatClient() {
       );
 
       const assistantMessage = formatAssistantMessage(reply.message, reply.next_fields);
-      pushAssistant(assistantMessage);
       showToast("success", "メッセージを送信しました。");
+            pushAssistant(assistantMessage);
     } catch (error: unknown) {
       const message = getErrorMessage(error);
       setMessages((prev) =>
@@ -589,7 +598,7 @@ export default function ChatClient() {
             </div>
           )}
         </header>
-        <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden sm:flex-row">
           <aside className="flex min-h-0 w-full flex-shrink-0 flex-col border-b border-slate-200 bg-slate-50/80 sm:w-72 sm:border-b-0 sm:border-r sm:bg-white">
             <div className="space-y-4 px-5 py-5">
               <div>
@@ -635,7 +644,10 @@ export default function ChatClient() {
             {/* 過去のセッション一覧はプルダウンのみ表示する仕様に変更したため非表示 */}
           </aside>
           <div className="flex min-h-0 flex-1 flex-col bg-slate-50">
-            <div ref={scrollerRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-6">
+            <div
+              ref={scrollerRef}
+              className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-6"
+            ></div>
               {historyHasMore ? (
                 <div className="flex justify-center text-xs text-slate-500" aria-live="polite">
                   {loadingMore ? "過去のメッセージを読み込んでいます..." : "上にスクロールするとさらに表示されます"}
@@ -691,11 +703,9 @@ export default function ChatClient() {
                             <span>
                               {message.status === "error"
                                 ? "エラー"
-                                : message.status === "read"
-                                  ? "既読"
-                                  : message.status === "sent"
-                                    ? "送信済み"
-                                    : "送信中"}
+                                : message.status === "read" || message.status === "sent"
+                                  ? "送信済"
+                                  : "送信中"}
                             </span>
                           )}
                         </div>
@@ -718,7 +728,6 @@ export default function ChatClient() {
                       </span>
                     </li>
                   )}
-                  <div ref={bottomRef} />
                 </ul>
               )}
             </div>
@@ -749,7 +758,7 @@ export default function ChatClient() {
                       placeholder="メッセージを入力"
                       disabled={loading || restoring}
                       aria-label="メッセージを入力"
-                      maxLength={5000}
+                      maxLength={MAX_MESSAGE_LENGTH}
                     />
                   </div>
                   <button
@@ -761,7 +770,10 @@ export default function ChatClient() {
                     {loading ? "送信中" : "送信"}
                   </button>
                 </div>
-                <p className="text-xs text-slate-500">Enterで送信／Shift + Enterで改行（最大5000文字）</p>
+                <p className="text-xs text-slate-500" aria-live="polite">
+                  Enterで送信／Shift + Enterで改行（最大5000文字・残り
+                  {remainingChars.toLocaleString()}文字）
+                </p>
               </div>
             </form>
           </div>
