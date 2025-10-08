@@ -1,6 +1,6 @@
 // サーバーコンポーネント（表示だけ）
-import EmailLinkForm from "@/components/EmailLinkForm";
 import ChatClient from "@/components/ChatClient";
+import SignInPanel from "@/components/SignInPanel";
 
 export default function Page() {
   return (
@@ -16,17 +16,7 @@ export default function Page() {
                 メールリンクでログインして、コーチとの会話を開始しましょう。
               </p>
             </div>
-            <div className="rounded-2xl bg-[#111b21]/40 p-4">
-              <h2 className="text-sm font-semibold uppercase tracking-[0.2em] text-[#00a884]">
-                サインイン
-              </h2>
-              <p className="mt-1 text-xs text-[#8696a0]">
-                Grow Coachと会話するには、メールアドレスを入力してサインインリンクを受け取ってください。
-              </p>
-              <div className="mt-4">
-                <EmailLinkForm />
-              </div>
-            </div>
+            <SignInPanel />
           </div>
         </section>
 

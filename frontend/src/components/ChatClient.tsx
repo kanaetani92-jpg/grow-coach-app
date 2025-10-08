@@ -17,6 +17,7 @@ export default function ChatClient() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [restoring, setRestoring] = useState(false);
+  const [userName, setUserName] = useState<string | null>(null);
 
   const tokenRef = useRef<string | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
@@ -30,10 +31,12 @@ export default function ChatClient() {
         setSessionId(null);
         setStage(null);
         tokenRef.current = null;
+        setUserName(null);
         return;
       }
 
       setAuthed(true);
+      setUserName(user.displayName || user.email || "サインイン済み");
       const idToken = await user.getIdToken();
       tokenRef.current = idToken;
 
@@ -218,12 +221,17 @@ export default function ChatClient() {
             <p className="text-lg font-semibold">Grow Coach</p>
             <p className="text-xs text-white/80">コーチと会話を続けましょう</p>
           </div>
-          <button
-            className="rounded-full bg-white/15 px-4 py-2 text-xs font-medium tracking-wide text-white transition hover:bg-white/25"
-            onClick={() => signOut(auth)}
-          >
-            サインアウト
-          </button>
+          <div className="flex flex-col items-end gap-1 text-xs text-white/80">
+            <span className="rounded-full bg-white/15 px-3 py-1 text-xs font-medium text-white">
+              {userName ?? "サインイン済み"}
+            </span>
+            <button
+              className="rounded-full bg-white/15 px-4 py-1 text-[11px] font-medium tracking-wide text-white transition hover:bg-white/25"
+              onClick={() => signOut(auth)}
+            >
+              サインアウト
+            </button>
+          </div>
         </div>
 
         {/* ステータス・バッジ */}
