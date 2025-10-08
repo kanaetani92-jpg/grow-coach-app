@@ -492,8 +492,8 @@ export default function ChatClient() {
   }
 
   return (
-    <div className="relative flex h-[34rem] overflow-hidden rounded-[32px] border border-slate-200 bg-white text-base text-slate-900 shadow-2xl shadow-slate-900/20">
-      <aside className="hidden w-64 flex-shrink-0 flex-col border-r border-slate-200 bg-slate-900/95 text-slate-100 lg:flex">
+    <div className="relative flex min-h-[34rem] flex-col overflow-hidden rounded-[32px] border border-slate-200 bg-white text-base text-slate-900 shadow-2xl shadow-slate-900/20 sm:flex-row">
+      <aside className="flex min-h-0 w-full flex-shrink-0 flex-col border-b border-slate-200 bg-slate-900/95 text-slate-100 sm:w-64 sm:border-b-0 sm:border-r">
         <div className="flex items-center justify-between gap-2 px-5 py-4">
           <h2 className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-300">セッション</h2>
           <button
@@ -504,7 +504,7 @@ export default function ChatClient() {
             新規
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto px-3 pb-4">
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-4">
           {sessionsLoading ? (
             <p className="px-2 text-xs text-slate-400">セッションを読み込んでいます...</p>
           ) : sessionError ? (
@@ -540,7 +540,7 @@ export default function ChatClient() {
         </div>
       </aside>
 
-      <div className="flex flex-1 flex-col">
+      <div className="flex min-h-0 flex-1 flex-col">
         <header className="sticky top-0 z-10 flex flex-col gap-4 border-b border-slate-200 bg-white/95 px-6 py-4 backdrop-blur sm:px-8">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
@@ -559,36 +559,10 @@ export default function ChatClient() {
               </button>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-3 lg:hidden">
-            <div className="flex-1">
-              <label className="sr-only" htmlFor="session-select">
-                セッションを選択
-              </label>
-              <select
-                id="session-select"
-                value={sessionIdRef.current ?? ""}
-                onChange={(event) => handleSelectSession(event.target.value)}
-                className="w-full rounded-full border border-slate-300 bg-white px-3 py-2 text-sm"
-              >
-                {sessions.map((session) => (
-                  <option key={session.sessionId} value={session.sessionId}>
-                    {formatSessionLabel(session)}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <button
-              type="button"
-              onClick={handleCreateSession}
-              className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-600 shadow-sm transition hover:border-emerald-300 hover:bg-emerald-50"
-            >
-              新しいセッション
-            </button>
-          </div>
         </header>
 
-        <div className="flex flex-1 flex-col bg-slate-50/80">
-          <div ref={scrollerRef} className="flex-1 space-y-4 overflow-y-auto px-6 py-6">
+        <div className="flex min-h-0 flex-1 flex-col bg-slate-50/80">
+          <div ref={scrollerRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-6">
             {historyHasMore ? (
               <div className="flex justify-center text-xs text-slate-400">
                 {loadingMore ? "過去のメッセージを読み込んでいます..." : "上にスクロールするとさらに表示されます"}

@@ -37,24 +37,24 @@ export default function EmailLinkForm() {
 
   return (
     <form onSubmit={onSubmit} className="space-y-3">
-      <div className="rounded-full border border-transparent bg-[#2a3942] px-4 py-3 text-sm text-[#e9edef] focus-within:border-[#00a884] focus-within:ring-2 focus-within:ring-[#00a884]/40">
+      <div className="rounded-full border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm focus-within:border-emerald-400 focus-within:ring-2 focus-within:ring-emerald-100">
         <input
           type="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="you@example.com"
           required
-          className="w-full bg-transparent text-[#e9edef] placeholder:text-[#8696a0] focus:outline-none"
+          className="w-full bg-transparent text-slate-900 placeholder:text-slate-400 focus:outline-none"
         />
       </div>
       <button
         type="submit"
         disabled={sending || !email}
-        className="w-full rounded-full bg-[#00a884] px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-[#00a884]/40 transition hover:bg-[#02926f] disabled:cursor-not-allowed disabled:opacity-60"
+        className="w-full rounded-full bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-emerald-600/30 transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
       >
         {sending ? "送信中…" : "メールでサインインリンクを送る"}
       </button>
-      {msg && <p className="text-xs text-[#8696a0]">{msg}</p>}
+      {msg && <p className="text-xs text-slate-500">{msg}</p>}
     </form>
   );
 }
