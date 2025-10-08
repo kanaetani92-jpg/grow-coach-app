@@ -550,7 +550,7 @@ export default function ChatClient() {
   }
 
   return (
-    <section className="relative flex min-h-[34rem] flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white text-base text-slate-900 shadow-sm max-h-[calc(100vh-160px)]">
+    <section className="relative flex min-h-[34rem] flex-col rounded-3xl border border-slate-200 bg-white text-base text-slate-900 shadow-sm lg:max-h-[calc(100vh-160px)] lg:overflow-hidden">
       <header className="border-b border-slate-200 px-6 py-5 sm:px-8">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
