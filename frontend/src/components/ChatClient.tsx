@@ -917,12 +917,80 @@ function normalizeHistoryMessage(message: HistoryMessage): Msg | null {
   return null;
 }
 
+const NEXT_FIELD_LABELS: Record<string, string> = {
+  Goal_Specific_Description: "目標の具体的なイメージ",
+  Goal_Measurable_Timeline: "達成時期・数値目標",
+  Goal_Motivation: "この目標に取り組む理由",
+  Goal_Priority: "重要度・優先順位",
+  Reality_Current_Status: "現在の状況・進捗",
+  Reality_Challenges: "直面している課題",
+  Reality_Resources: "活用できる資源・強み",
+  Reality_Emotions: "感じている気持ち",
+  Options_Possibilities: "考えられる選択肢",
+  Options_ProsCons: "各選択肢のメリット・デメリット",
+  Options_Support: "得られそうな支援・協力",
+  Options_Criteria: "選ぶ際の判断基準",
+  Will_Action_Steps: "具体的な次の一歩",
+  Will_Commitment_Level: "実行へのコミット度合い",
+  Will_Obstacles_Plan: "想定される障害と対策",
+  Will_Accountability: "フォローアップの方法",
+  Wrap_Key_Takeaways: "今日の気づき・学び",
+  Wrap_Next_Steps: "次回までの約束・行動",
+  Wrap_Appreciation: "感謝したいこと・良かった点",
+  Wrap_Encouragement: "励まし・応援メッセージ",
+  Review_Progress: "前回からの進捗",
+  Review_Learnings: "得られた学び",
+  Review_Adjustments: "必要な見直し・調整",
+  Review_Celebrations: "称えたい成果",
+};
+
+const STAGE_LABELS: Record<string, string> = {
+  Goal: "ゴール",
+  Reality: "現状",
+  Options: "選択肢",
+  Will: "行動計画",
+  Wrap: "振り返り",
+  Review: "レビュー",
+};
+
+function formatNextFieldLabel(field: string): string {
+  const known = NEXT_FIELD_LABELS[field];
+  if (known) return known;
+
+  const segments = field.split("_").filter(Boolean);
+  if (segments.length === 0) {
+    return field;
+  }
+
+  const [stage, ...rest] = segments;
+  const stageLabel = STAGE_LABELS[stage] ?? stage;
+  if (rest.length === 0) {
+    return stageLabel || field;
+  }
+
+  const restLabel = rest
+    .map((part) =>
+      part
+        .replace(/([a-z])([A-Z])/g, "$1 $2")
+        .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+        .toLowerCase()
+        .replace(/\b([a-z])/g, (match) => match.toUpperCase()),
+    )
+    .join("・");
+
+  if (stageLabel) {
+    return `${stageLabel}：${restLabel}`;
+  }
+
+  return restLabel || field;
+}
+
 function formatAssistantMessage(message: string, nextFields: string[]): string {
   const lines: string[] = [];
   lines.push(message);
   if (nextFields.length > 0) {
     lines.push("次に確認したい項目:");
-    lines.push(...nextFields.map((f) => `・${f}`));
+    lines.push(...nextFields.map((field) => `・${formatNextFieldLabel(field)}`));
   }
   return lines.join("\n");
 }
