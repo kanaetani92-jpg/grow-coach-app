@@ -1,7 +1,3 @@
-
-+7
--7
-
 "use client";
 
 import { useEffect, useState } from "react";
