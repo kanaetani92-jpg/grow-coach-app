@@ -456,10 +456,8 @@ export default function ChatClient() {
     } finally {
       setCreatingSession(false);
     }
-      setCreatingSession(false);
   }, [callWithAuth, showToast, creatingSession, isOnline]);
 
-  const hasSessions = sessions.length > 0;
 
   const filteredSessions = useMemo(() => {
     const query = sessionQuery.trim().toLowerCase();
@@ -623,7 +621,7 @@ export default function ChatClient() {
                   className="w-full bg-transparent text-slate-900 placeholder:text-slate-400 focus:outline-none"
                 />
               </div>
-               {!sessionsLoading && !sessionError && filteredSessions.length > 0 ? (
+              {!sessionsLoading && !sessionError && filteredSessions.length > 0 ? (
                 <div>
                   <label htmlFor="session-select" className="mb-1 block text-xs font-medium text-slate-500">
                     過去のセッションを選択
@@ -659,89 +657,7 @@ export default function ChatClient() {
                 </div>
               ) : null}
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
-              {sessionsLoading ? (
-                <ul className="space-y-3" aria-live="polite">
-                  {Array.from({ length: 4 }).map((_, index) => (
-                    <li key={index} className="h-16 animate-pulse rounded-2xl bg-slate-200/70" />
-                  ))}
-                </ul>
-              ) : sessionError ? (
-                <div
-                  className="space-y-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-xs text-amber-700"
-                  aria-live="assertive"
-                >
-                  <p>{sessionError}</p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void refreshSessions();
-                    }}
-                    className="inline-flex items-center gap-2 rounded-full border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-700 transition hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2"
-                    aria-label="セッション一覧を再読み込み"
-                  >
-                    <span aria-hidden="true">↻</span>
-                    再試行
-                  </button>
-                </div>
-              ) : filteredSessions.length === 0 ? (
-                <div className="flex flex-col items-center gap-4 rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-6 text-center text-sm text-slate-600">
-                  <p>
-                    {hasSessions
-                      ? "該当するセッションが見つかりません。検索条件を変更してください。"
-                      : "まだセッションがありません。最初のセッションを作成しましょう。"}
-                  </p>
-                  {hasSessions ? (
-                    <button
-                      type="button"
-                      onClick={() => setSessionQuery("")}
-                      className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2"
-                    >
-                      条件をクリア
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={handleCreateSession}
-                      className="inline-flex items-center gap-2 rounded-full bg-teal-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
-                      disabled={creatingSession}
-                      aria-label="新しいセッションを作成"
-                    >
-                      <span aria-hidden="true" className="text-lg leading-none">
-                        ＋
-                      </span>
-                      新規セッション
-                    </button>
-                  )}
-                </div>
-              ) : (
-                <ul className="space-y-2">
-                  {filteredSessions.map((session) => {
-                    const active = session.sessionId === sessionIdRef.current;
-                    return (
-                      <li key={session.sessionId}>
-                        <button
-                          type="button"
-                          onClick={() => handleSelectSession(session.sessionId)}
-                          className={`w-full rounded-2xl border px-4 py-3 text-left text-sm transition ${
-                            active
-                              ? "border-teal-500 bg-teal-50 text-teal-900 shadow-sm"
-                              : "border-transparent bg-white text-slate-700 hover:border-slate-200 hover:bg-slate-50"
-                          }`}
-                          aria-current={active ? "true" : undefined}
-                        >
-                          <div className="font-semibold">{formatSessionLabel(session)}</div>
-                          <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
-                            <span>ステージ: {session.stage ?? "-"}</span>
-                            <span>{formatRelativeTime(session.updatedAt ?? session.createdAt)}</span>
-                          </div>
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
+                        {/* 過去のセッション一覧はプルダウンのみ表示する仕様に変更したため非表示 */}
           </aside>
           <div className="flex min-h-0 flex-1 flex-col bg-slate-50">
             <div ref={scrollerRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-6">
