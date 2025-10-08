@@ -1,27 +1,60 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { auth } from "@/lib/firebase";
 import { onAuthStateChanged, signOut } from "firebase/auth";
-import { ApiError, callCoach, createSession, fetchHistory } from "@/lib/api";
+import { ApiError, callCoach, createSession, fetchHistory, type HistoryMessage } from "@/lib/api";
 import { getErrorMessage } from "@/lib/errors";
 import { logEvent } from "@/lib/logger";
 
-type Msg = { role: "user" | "assistant"; content: string };
+type Msg = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  createdAt: number;
+  status?: "sending" | "sent" | "read" | "error";
+};
 
 export default function ChatClient() {
   const [authed, setAuthed] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [stage, setStage] = useState<string | null>(null);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [restoring, setRestoring] = useState(false);
   const [userName, setUserName] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
   const tokenRef = useRef<string | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const userInitial = useMemo(() => {
+    if (!userName) return "U";
+    const firstChar = userName.trim()[0];
+    if (!firstChar) return "U";
+    return firstChar.toUpperCase();
+  }, [userName]);
+
+  const showToast = useCallback((type: "success" | "error", message: string) => {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+    }
+    setToast({ type, message });
+    toastTimerRef.current = setTimeout(() => {
+      setToast(null);
+      toastTimerRef.current = null;
+    }, 4000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+      }
+    };
+  }, []);
 
   // ===== 認証＆初回セッション作成 =====
   useEffect(() => {
@@ -29,9 +62,10 @@ export default function ChatClient() {
       if (!user) {
         setAuthed(false);
         setSessionId(null);
-        setStage(null);
         tokenRef.current = null;
         setUserName(null);
+        window.localStorage.removeItem("currentSessionId");
+        window.localStorage.removeItem("currentSessionStage");
         return;
       }
 
@@ -44,8 +78,6 @@ export default function ChatClient() {
       const storedSessionId = window.localStorage.getItem("currentSessionId");
       if (storedSessionId) {
         setSessionId(storedSessionId);
-        const storedStage = window.localStorage.getItem("currentSessionStage");
-        setStage(storedStage);
         return;
       }
 
@@ -64,7 +96,6 @@ export default function ChatClient() {
         });
 
         setSessionId(session.sessionId);
-        setStage(session.stage);
         window.localStorage.setItem("currentSessionId", session.sessionId);
         window.localStorage.setItem("currentSessionStage", session.stage);
       } catch (error) {
@@ -112,14 +143,15 @@ export default function ChatClient() {
         if (canceled) return;
 
         const restored = history.messages
-          .map((m) => normalizeHistoryMessage(m, history.stage ?? null))
+          .map((m) => normalizeHistoryMessage(m))
           .filter((m): m is Msg => m !== null);
 
         setMessages(restored);
 
         if (history.stage) {
-          setStage(history.stage);
           window.localStorage.setItem("currentSessionStage", history.stage);
+        } else {
+          window.localStorage.removeItem("currentSessionStage");
         }
       } catch (error) {
         if (canceled) return;
@@ -130,7 +162,7 @@ export default function ChatClient() {
             const user = auth.currentUser;
             if (!user) throw new Error("ログイン情報を取得できませんでした。");
 
-            let token = tokenRef.current ?? (await user.getIdToken());
+            const token = tokenRef.current ?? (await user.getIdToken());
             tokenRef.current = token;
 
             if (!token) throw new Error("ログイン情報を取得できませんでした。");
@@ -139,7 +171,6 @@ export default function ChatClient() {
             if (canceled) return;
 
             setSessionId(session.sessionId);
-            setStage(session.stage);
             window.localStorage.setItem("currentSessionId", session.sessionId);
             window.localStorage.setItem("currentSessionStage", session.stage);
             pushAssistant("前回のセッションが見つからなかったため、新しいセッションを開始しました。");
@@ -153,13 +184,25 @@ export default function ChatClient() {
             if (canceled) return;
             const message = getErrorMessage(creationError);
             setMessages([
-              { role: "assistant", content: `前回のセッションが見つかりませんでした。新しいセッションの作成にも失敗しました: ${message}` },
+              {
+                id: `assistant-${Date.now()}`,
+                role: "assistant",
+                content: `前回のセッションが見つかりませんでした。新しいセッションの作成にも失敗しました: ${message}`,
+                createdAt: Date.now(),
+              },
             ]);
             logEvent("history_restore_failed", { sessionId, message: `recreate_failed:${message}` });
           }
         } else {
           const message = getErrorMessage(error);
-          setMessages([{ role: "assistant", content: `履歴の取得に失敗しました: ${message}` }]);
+          setMessages([
+            {
+              id: `assistant-${Date.now()}`,
+              role: "assistant",
+              content: `履歴の取得に失敗しました: ${message}`,
+              createdAt: Date.now(),
+            },
+          ]);
           logEvent("history_restore_failed", { sessionId, message });
         }
       } finally {
@@ -173,8 +216,28 @@ export default function ChatClient() {
     };
   }, [authed, sessionId]);
 
-  function pushAssistant(text: string) {
-    setMessages((m) => [...m, { role: "assistant", content: text }]);
+  const quickActions = useMemo(
+    () => ["今日のテーマを選ぶ", "目標を設定", "最近の出来事を振り返る"],
+    [],
+  );
+
+  function pushAssistant(text: string, createdAt?: number) {
+    setMessages((prev) => {
+      const updated = [...prev];
+      const lastIndex = updated.length - 1;
+      if (lastIndex >= 0 && updated[lastIndex]?.role === "user" && updated[lastIndex].status !== "error") {
+        updated[lastIndex] = { ...updated[lastIndex], status: "read" };
+      }
+      return [
+        ...updated,
+        {
+          id: `assistant-${createdAt ?? Date.now()}`,
+          role: "assistant",
+          content: text,
+          createdAt: createdAt ?? Date.now(),
+        },
+      ];
+    });
   }
 
   // ===== 送信 =====
@@ -182,7 +245,18 @@ export default function ChatClient() {
     const msg = input.trim();
     if (!msg || restoring) return;
 
-    setMessages((m) => [...m, { role: "user", content: msg }]);
+    const timestamp = Date.now();
+    const messageId = `user-${timestamp}`;
+    setMessages((m) => [
+      ...m,
+      {
+        id: messageId,
+        role: "user",
+        content: msg,
+        createdAt: timestamp,
+        status: "sending",
+      },
+    ]);
     setInput("");
     setLoading(true);
 
@@ -195,14 +269,26 @@ export default function ChatClient() {
 
       const reply = await callCoach({ sessionId: activeSessionId, userText: msg }, idToken);
 
-      setStage(reply.stage);
       window.localStorage.setItem("currentSessionStage", reply.stage);
 
-      const assistantMessage = formatAssistantMessage(reply.message, reply.next_fields, reply.stage);
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.id === messageId && message.status !== "error"
+            ? { ...message, status: "sent" }
+            : message,
+        ),
+      );
+
+      const assistantMessage = formatAssistantMessage(reply.message, reply.next_fields);
       pushAssistant(assistantMessage);
+      showToast("success", "メッセージを送信しました。");
     } catch (error: unknown) {
       const message = getErrorMessage(error);
+      setMessages((prev) =>
+        prev.map((m) => (m.id === messageId ? { ...m, status: "error" } : m)),
+      );
       pushAssistant(`エラー: ${message}`);
+      showToast("error", "メッセージの送信に失敗しました。もう一度お試しください。");
     } finally {
       setLoading(false);
     }
@@ -213,66 +299,100 @@ export default function ChatClient() {
   }
 
   return (
-    <div className="flex h-[34rem] flex-col overflow-hidden rounded-[32px] border border-[#d1d7db] bg-[#f0f2f5] shadow-2xl shadow-black/30">
+    <div className="relative flex h-[34rem] flex-col overflow-hidden rounded-[32px] border border-slate-200 bg-white text-base text-slate-900 shadow-2xl shadow-slate-900/20">
       {/* ヘッダー（固定） */}
-      <header className="sticky top-0 z-10 bg-[var(--accent-strong)] px-6 py-4 text-[var(--ink)] shadow">
-        <div className="mx-auto flex items-start justify-between gap-4">
-          <div>
-            <p className="text-lg font-semibold">Grow Coach</p>
-            <p className="text-xs text-white/80">コーチと会話を続けましょう</p>
-          </div>
-          <div className="flex flex-col items-end gap-1 text-xs text-white/80">
-            <span className="rounded-full bg-white/15 px-3 py-1 text-xs font-medium text-white">
-              {userName ?? "サインイン済み"}
-            </span>
-            <button
-              className="rounded-full bg-white/15 px-4 py-1 text-[11px] font-medium tracking-wide text-white transition hover:bg-white/25"
-              onClick={() => signOut(auth)}
-            >
-              サインアウト
-            </button>
-          </div>
+      <header className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-slate-200 bg-white/95 px-8 py-5 backdrop-blur">
+        <div>
+          <p className="text-xl font-semibold tracking-tight text-slate-900">Grow Coach</p>
+          <p className="text-sm text-slate-500">コーチと一緒に次のアクションを決めましょう</p>
         </div>
-
-        {/* ステータス・バッジ */}
-        <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] font-medium text-white/85">
-          <span className="rounded-full bg-white/10 px-3 py-1 uppercase tracking-[0.18em]">ログイン済み</span>
-          {stage && <span className="rounded-full bg-white/10 px-3 py-1">ステージ: {stage}</span>}
-          {sessionId && <span className="rounded-full bg-white/10 px-3 py-1">セッションID: {sessionId}</span>}
+        <div className="flex items-center gap-3">
+          <div className="hidden text-sm text-slate-500 sm:block">{userName ?? "サインイン済み"}</div>
+          <button
+            type="button"
+            onClick={() => signOut(auth)}
+            className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
+          >
+            <span aria-hidden="true" className="text-lg leading-none">⎋</span>
+            ログアウト
+          </button>
         </div>
       </header>
 
       {/* 本文 */}
-      <div className="flex flex-1 flex-col bg-[#f0f2f5]">
-        <div ref={scrollerRef} className="chat-pattern flex-1 space-y-3 overflow-y-auto px-4 py-5">
+      <div className="flex flex-1 flex-col bg-slate-50/80">
+        <div ref={scrollerRef} className="flex-1 space-y-4 overflow-y-auto px-6 py-6">
           {messages.length === 0 ? (
-            <div className="flex h-full items-center justify-center">
-              <p className="rounded-full bg-white/80 px-4 py-2 text-sm text-[#54656f] shadow">
-                {restoring ? "会話履歴を読み込んでいます..." : "コーチに聞きたいことを入力してみましょう。"}
+            <div className="flex h-full flex-col items-center justify-center gap-6 text-center text-slate-600">
+              <p className="rounded-2xl bg-white px-5 py-3 text-base shadow-sm">
+                {restoring ? "会話履歴を読み込んでいます..." : "コーチに相談したい内容を入力して会話を始めましょう。"}
               </p>
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                {quickActions.map((action) => (
+                  <button
+                    key={action}
+                    type="button"
+                    onClick={() => {
+                      setInput(action);
+                      showToast("success", `${action} を入力欄にセットしました。`);
+                    }}
+                    className="rounded-full border border-emerald-200 bg-white px-4 py-2 text-sm font-medium text-emerald-700 transition hover:border-emerald-300 hover:bg-emerald-50"
+                  >
+                    {action}
+                  </button>
+                ))}
+              </div>
             </div>
           ) : (
-            <ul className="space-y-3">
-              {messages.map((message, index) => (
-                <li
-                  key={`${message.role}-${index}-${message.content.slice(0, 8)}`}
-                  className={message.role === "user" ? "flex justify-end" : "flex justify-start"}
-                >
-                  <span
-                    className={`relative inline-block max-w-[80%] rounded-2xl px-4 py-2 text-sm leading-relaxed shadow-sm ${
+            <ul className="space-y-4">
+              {messages.map((message) => (
+                <li key={message.id} className="flex items-end gap-3">
+                  {message.role === "assistant" && (
+                    <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-emerald-600 text-sm font-semibold text-white shadow-sm">
+                      GC
+                    </div>
+                  )}
+                  <div
+                    className={`max-w-[70%] rounded-3xl px-5 py-3 shadow-sm ${
                       message.role === "user"
-                        ? "bg-[#d9fdd3] text-[#111b21]" // user（右・ライトグリーン）
-                        : "bg-white text-[#111b21] border" // assistant（左・白）
+                        ? "ml-auto bg-emerald-50 text-emerald-900"
+                        : "bg-white text-slate-900 border border-slate-200"
                     }`}
                   >
-                    <span className="chat-text">{message.content}</span>
-                  </span>
+                    <p className="chat-text text-[15px] leading-relaxed">{message.content}</p>
+                    <div
+                      className={`mt-2 flex items-center gap-2 text-[11px] ${
+                        message.role === "user" ? "justify-end text-emerald-900/70" : "justify-start text-slate-500"
+                      }`}
+                    >
+                      <span>{formatTimestamp(message.createdAt)}</span>
+                      {message.role === "user" && (
+                        <span>
+                          {message.status === "error"
+                            ? "エラー"
+                            : message.status === "read"
+                              ? "既読"
+                              : message.status === "sent"
+                                ? "送信済み"
+                                : "送信中"}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {message.role === "user" && (
+                    <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white shadow-sm">
+                      {userInitial}
+                    </div>
+                  )}
                 </li>
               ))}
               {loading && (
-                <li className="flex justify-start text-[#54656f]">
-                  <span className="inline-flex items-center gap-2 rounded-full bg-white/90 px-3 py-1 text-xs shadow">
-                    <span className="h-2 w-2 animate-pulse rounded-full bg-[#99aab5]" />
+                <li className="flex items-center gap-3 text-slate-500">
+                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-emerald-600 text-sm font-semibold text-white shadow-sm">
+                    GC
+                  </div>
+                  <span className="inline-flex items-center gap-2 rounded-2xl bg-white px-4 py-2 text-sm shadow-sm">
+                    <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-emerald-400" />
                     考え中…
                   </span>
                 </li>
@@ -288,68 +408,91 @@ export default function ChatClient() {
             e.preventDefault();
             onSend();
           }}
-          className="safe-bottom sticky bottom-0 border-t border-[#d1d7db] bg-white/90 px-4 py-3 backdrop-blur"
+          className="safe-bottom sticky bottom-0 border-t border-slate-200 bg-white/95 px-6 py-4 backdrop-blur"
         >
-          <div className="mx-auto flex items-center gap-3">
-            <div className="flex-1 rounded-full border border-transparent bg-white px-4 py-2 text-sm text-[#111b21] shadow focus-within:border-[var(--accent)] focus-within:ring-2 focus-within:ring-[var(--accent)]/30">
-              <input
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    onSend();
-                  }
-                }}
-                className="w-full bg-transparent placeholder:text-[#667781] focus:outline-none"
-                placeholder="メッセージを入力（Enterで送信 / Shift+Enterで改行）"
-                disabled={loading || restoring}
-                aria-label="メッセージを入力"
-              />
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-3">
+              <div className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm focus-within:border-emerald-400 focus-within:ring-2 focus-within:ring-emerald-100">
+                <input
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      onSend();
+                    }
+                  }}
+                  className="w-full bg-transparent text-[15px] text-slate-900 placeholder:text-slate-400 focus:outline-none"
+                  placeholder="メッセージを入力"
+                  disabled={loading || restoring}
+                  aria-label="メッセージを入力"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={loading || restoring || input.trim().length === 0}
+                className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-emerald-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-emerald-600/30 transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {loading ? "送信中" : "送信"}
+              </button>
             </div>
-            <button
-              type="submit"
-              disabled={loading || restoring || input.trim().length === 0}
-              className="rounded-full bg-[var(--accent)] px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-[var(--accent)]/40 transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {loading ? "送信中..." : "送信"}
-            </button>
+            <p className="text-xs text-slate-500">Enterで送信／Shift + Enterで改行</p>
           </div>
         </form>
       </div>
+
+      {toast && (
+        <div
+          role="status"
+          className={`pointer-events-none absolute left-1/2 top-4 -translate-x-1/2 rounded-full px-4 py-2 text-sm shadow-lg ${
+            toast.type === "success"
+              ? "bg-emerald-600 text-white"
+              : "bg-rose-600 text-white"
+          }`}
+        >
+          {toast.message}
+        </div>
+      )}
     </div>
   );
 }
 
 /* ====== 履歴正規化 / 表示整形 ====== */
-type HistoryMessage = {
-  role: string;
-  content: string;
-  createdAt: number;
-  stage?: string;
-  next_fields?: string[];
-};
-
-function normalizeHistoryMessage(message: HistoryMessage, fallbackStage: string | null): Msg | null {
+function normalizeHistoryMessage(message: HistoryMessage): Msg | null {
   if (message.role === "user" && typeof message.content === "string") {
-    return { role: "user", content: message.content };
+    return {
+      id: `user-${message.createdAt}`,
+      role: "user",
+      content: message.content,
+      createdAt: message.createdAt,
+      status: "read",
+    };
   }
   if (message.role === "coach" && typeof message.content === "string") {
     const fields = Array.isArray(message.next_fields)
       ? message.next_fields.filter((x): x is string => typeof x === "string")
       : [];
-    const stage = typeof message.stage === "string" && message.stage ? message.stage : fallbackStage ?? "G";
-    return { role: "assistant", content: formatAssistantMessage(message.content, fields, stage) };
+    return {
+      id: `assistant-${message.createdAt}`,
+      role: "assistant",
+      content: formatAssistantMessage(message.content, fields),
+      createdAt: message.createdAt,
+    };
   }
   return null;
 }
 
-function formatAssistantMessage(message: string, nextFields: string[], stage: string): string {
+function formatAssistantMessage(message: string, nextFields: string[]): string {
   const lines: string[] = [];
-  lines.push(`【ステージ: ${stage}】${message}`);
+  lines.push(message);
   if (nextFields.length > 0) {
     lines.push("次に確認したい項目:");
     lines.push(...nextFields.map((f) => `・${f}`));
   }
   return lines.join("\n");
+}
+
+function formatTimestamp(timestamp: number): string {
+  const date = new Date(timestamp);
+  return date.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
 }

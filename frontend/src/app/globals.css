@@ -1,3 +1,6 @@
++4
+-11
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -18,8 +21,10 @@
 html, body { height: 100%; }
 
 body {
-  background: radial-gradient(circle at top, #233138 0%, rgba(35,49,56,0) 55%), var(--bg);
+  background: linear-gradient(160deg, #ecfdf5 0%, #d1fae5 100%);
   color: var(--ink);
+  font-size: 16px;
+  line-height: 1.6;
   font-feature-settings: "ss01","cv01";
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -39,20 +44,11 @@ body {
   outline-offset: 2px;
 }
 
-/* ---- WhatsApp-like chat background pattern (apply only to chat area) ---- */
-.chat-pattern {
-  background-color: #e5ddd5;
-  background-image:
-    radial-gradient(circle at 3px 3px, rgba(7, 94, 84, 0.14) 0, rgba(7, 94, 84, 0.14) 1px, transparent 1px),
-    radial-gradient(circle at 20px 20px, rgba(7, 94, 84, 0.08) 0, rgba(7, 94, 84, 0.08) 1px, transparent 1px);
-  background-size: 40px 40px;
-}
-
 /* ---- Chat text helpers ---- */
 .chat-text {
   white-space: pre-wrap;   /* 改行を保持して折り返す */
   word-break: break-word;  /* 長い単語を中断して折り返す */
-  line-height: 1.7;        /* 読みやすい行間 */
+  line-height: 1.55;       /* 読みやすい行間 */
 }
 
 /* ---- iOS セーフエリア（下部固定の入力欄などに） ---- */

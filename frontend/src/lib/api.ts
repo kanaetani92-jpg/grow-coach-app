@@ -1,3 +1,6 @@
++9
+-1
+
 // frontend/src/lib/api.ts
 export class ApiError extends Error {
   status: number;
@@ -6,6 +9,14 @@ export class ApiError extends Error {
     this.status = status;
   }
 }
+
+export type HistoryMessage = {
+  role: string;
+  content: string;
+  createdAt: number;
+  stage?: string;
+  next_fields?: string[];
+};
 
 function getApiBase(): string {
   const raw =
@@ -65,7 +76,7 @@ export async function callCoach(
 export async function fetchHistory(
   sessionId: string,
   idToken: string
-): Promise<{ stage?: string; messages: any[] }> {
+): Promise<{ stage?: string; messages: HistoryMessage[] }> {
   const qs = new URLSearchParams({ sessionId }).toString();
   return apiFetch(`/history?${qs}`, {
     method: "GET",
