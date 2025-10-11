@@ -941,7 +941,20 @@ function extractCoachingMessage(raw: string): string {
     break;
   }
 
-  return lines.join("\n").trim();
+  const joined = lines.join("\n").trim();
+  return stripMarkdownStrong(joined);
+}
+
+function stripMarkdownStrong(value: string): string {
+  if (!value) {
+    return "";
+  }
+
+  const withoutDelimited = value
+    .replace(/\*\*(.*?)\*\*/gs, "$1")
+    .replace(/__(.*?)__/gs, "$1");
+
+  return withoutDelimited.replace(/\*\*/g, "").replace(/__/g, "");
 }
 
 function parseCoachingState(value: unknown, fallbackStage: Stage): CoachingState {
