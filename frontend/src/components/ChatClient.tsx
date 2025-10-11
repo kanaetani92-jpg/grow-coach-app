@@ -108,6 +108,16 @@ export default function ChatClient() {
     () => COACH_DETAILS[preferredCoachType],
     [preferredCoachType],
   );
+    const coachDisplayName = useMemo(() => {
+    if (activeCoachDetails?.name) {
+      return activeCoachDetails.name;
+    }
+    return preferredCoachDetails.name;
+  }, [activeCoachDetails, preferredCoachDetails]);
+  const coachAvatarLabel = useMemo(
+    () => coachDisplayName.replace(/\s+/g, "\n"),
+    [coachDisplayName],
+  );
   const tokenRef = useRef<string | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -776,9 +786,15 @@ export default function ChatClient() {
               </div>
               {!sessionsLoading && !sessionError && sessions.length > 0 ? (
                 <div>
-                  <label htmlFor="session-select" className="mb-1 block text-xs font-medium text-slate-500">
-                    過去のセッションを選択
-                  </label>
+                  <div className="mb-1 space-y-1">
+                    <label htmlFor="session-select" className="block text-xs font-medium text-slate-500">
+                      過去のセッションを選択
+                    </label>
+                    <p className="text-[11px] text-slate-500" aria-live="polite">
+                      新しいセッション用コーチ:
+                      <span className="ml-1 font-semibold text-slate-900">{preferredCoachDetails.name}</span>
+                    </p>
+                  </div>
                   <div className="rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus-within:border-teal-500 focus-within:ring-2 focus-within:ring-teal-100">
                     <select
                       id="session-select"
@@ -856,8 +872,13 @@ export default function ChatClient() {
                   {messages.map((message) => (
                     <li key={message.id} className="flex items-end gap-3">
                       {message.role === "assistant" && (
-                        <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-teal-600 text-sm font-semibold text-white shadow-sm">
-                          GC
+                        <div
+                          className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-teal-600 text-white shadow-sm"
+                          aria-label={`${coachDisplayName}のメッセージ`}
+                        >
+                          <span className="whitespace-pre-line text-[10px] font-semibold leading-tight text-center">
+                            {coachAvatarLabel}
+                          </span>
                         </div>
                       )}
                       <div
@@ -896,8 +917,13 @@ export default function ChatClient() {
                   ))}
                   {loading && (
                     <li className="flex items-center gap-3 text-slate-500">
-                      <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-teal-600 text-sm font-semibold text-white shadow-sm">
-                        GC
+                      <div
+                        className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-teal-600 text-white shadow-sm"
+                        aria-label={`${coachDisplayName}が考えています`}
+                      >
+                        <span className="whitespace-pre-line text-[10px] font-semibold leading-tight text-center">
+                          {coachAvatarLabel}
+                        </span>
                       </div>
                       <span className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm shadow-sm">
                         <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-teal-400" />
