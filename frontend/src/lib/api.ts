@@ -135,7 +135,7 @@ export async function listSessions(
 export async function callCoach(
   payload: { sessionId: string; userText: string },
   idToken: string
-): Promise<{ stage: string; message: string; state: CoachingState }> {
+): Promise<{ stage: string; message: string; state: CoachingState; coachType: CoachType }> {
   return apiFetch("/coach", {
     method: "POST",
     headers: { Authorization: `Bearer ${idToken}` },
@@ -149,7 +149,7 @@ export async function fetchHistory(
   options: { before?: number; limit?: number } = {},
 ): Promise<{
   stage?: string;
-  coachType?: CoachType;
+  coachType: CoachType;
   messages: HistoryMessage[];
   hasMore: boolean;
   cursor?: number;

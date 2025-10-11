@@ -444,18 +444,8 @@ export default function ChatClient() {
         } else {
           window.localStorage.removeItem("currentSessionStage");
         }
-        if (history.coachType) {
-          updateSessionMeta(sessionId, { coachType: history.coachType });
-          setActiveCoachType(history.coachType);
-        } else {
-          const storedCoach = readStoredSessionCoachType(sessionId);
-          if (storedCoach) {
-            updateSessionMeta(sessionId, { coachType: storedCoach });
-            setActiveCoachType(storedCoach);
-          } else {
-            setActiveCoachType(null);
-          }
-        }
+        updateSessionMeta(sessionId, { coachType: history.coachType });
+        setActiveCoachType(history.coachType);
       } catch (error) {
         if (canceled) return;
 
@@ -692,8 +682,14 @@ export default function ChatClient() {
         callCoach({ sessionId: activeSessionId, userText: msg }, token),
       );
 
+      const now = Date.now();
       window.localStorage.setItem("currentSessionStage", reply.stage);
-      updateSessionMeta(activeSessionId, { stage: reply.stage, updatedAt: Date.now() });
+      updateSessionMeta(activeSessionId, {
+        stage: reply.stage,
+        coachType: reply.coachType,
+        updatedAt: now,
+      });
+      setActiveCoachType(reply.coachType);
 
       setMessages((prev) =>
         prev.map((message) =>
