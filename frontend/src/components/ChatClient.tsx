@@ -180,16 +180,20 @@ export default function ChatClient() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    window.localStorage.setItem("preferredCoachType", preferredCoachType);
+    window.localStorage.setItem(
+      "preferredCoachType",
+      normalizeCoachTypeValue(preferredCoachType),
+    );
   }, [preferredCoachType]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (activeCoachType) {
-      window.localStorage.setItem("currentCoachType", activeCoachType);
+      const normalized = normalizeCoachTypeValue(activeCoachType);
+      window.localStorage.setItem("currentCoachType", normalized);
       const activeSessionId = sessionIdRef.current;
       if (activeSessionId) {
-        persistSessionCoachType(activeSessionId, activeCoachType);
+        persistSessionCoachType(activeSessionId, normalized);
       }
     } else {
       window.localStorage.removeItem("currentCoachType");
@@ -239,12 +243,25 @@ export default function ChatClient() {
 
   const updateSessionMeta = useCallback((id: string, updates: Partial<SessionSummary>) => {
     setSessions((prev) => {
-    if (updates.coachType) {
-      persistSessionCoachType(id, updates.coachType);
-    }
-      const mapped = prev.map((session) =>
-        session.sessionId === id ? { ...session, ...updates } : session,
-      );
+      const coachUpdate =
+        updates.coachType !== undefined
+          ? normalizeCoachTypeValue(updates.coachType)
+          : undefined;
+      if (coachUpdate) {
+        persistSessionCoachType(id, coachUpdate);
+      }
+      const mapped = prev.map((session) => {
+        if (session.sessionId !== id) return session;
+        const next: SessionSummary = { ...session, ...updates };
+        if (coachUpdate) {
+          next.coachType = coachUpdate;
+        } else if (!isCoachType(next.coachType)) {
+          const normalized = normalizeCoachTypeValue(next.coachType ?? null);
+          next.coachType = normalized;
+          persistSessionCoachType(id, normalized);
+        }
+        return next;
+      });
       if (updates.updatedAt !== undefined) {
         return [...mapped].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
       }
@@ -265,12 +282,12 @@ export default function ChatClient() {
       const { sessions: fetched } = await callWithAuth((token) => listSessions(token));
       let workingSessions = [...fetched]
         .map((session) => {
-          if (session.coachType) {
-            persistSessionCoachType(session.sessionId, session.coachType);
-            return session;
-          }
           const storedCoach = readStoredSessionCoachType(session.sessionId);
-          return storedCoach ? { ...session, coachType: storedCoach } : session;
+          const resolvedCoach = normalizeCoachTypeValue(
+            session.coachType ?? storedCoach ?? null,
+          );
+          persistSessionCoachType(session.sessionId, resolvedCoach);
+          return { ...session, coachType: resolvedCoach };
         })
         .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
 
@@ -295,22 +312,25 @@ export default function ChatClient() {
           createSession(token, preferredCoachType),
         );
         const now = Date.now();
+        const normalizedCoach = normalizeCoachTypeValue(created.coachType);
         createdSession = {
           sessionId: created.sessionId,
           stage: created.stage,
-          coachType: created.coachType,
+          coachType: normalizedCoach,
           createdAt: now,
           updatedAt: now,
         };
         workingSessions = [createdSession, ...workingSessions];
         window.localStorage.setItem("currentSessionId", created.sessionId);
         window.localStorage.setItem("currentSessionStage", created.stage);
-        setActiveCoachType(created.coachType);
+        sessionIdRef.current = created.sessionId;
+        persistSessionCoachType(created.sessionId, normalizedCoach);
+        setActiveCoachType(normalizedCoach);
         logEvent("session_created", {
           from: "auto_create",
           sessionId: created.sessionId,
           stage: created.stage,
-          coachType: created.coachType, 
+          coachType: normalizedCoach,
         });
         nextId = created.sessionId;
       }
@@ -328,13 +348,15 @@ export default function ChatClient() {
         } else {
           window.localStorage.removeItem("currentSessionStage");
         }
-        if (nextMeta?.coachType) {
-          setActiveCoachType(nextMeta.coachType);
-        } else {
-          const storedCoach = readStoredSessionCoachType(nextId);
-          setActiveCoachType(storedCoach);
-        }
-        if (nextId !== sessionIdRef.current) {
+        const previousId = sessionIdRef.current;
+        sessionIdRef.current = nextId;
+        const storedCoach = readStoredSessionCoachType(nextId);
+        const resolvedCoach = normalizeCoachTypeValue(
+          nextMeta?.coachType ?? storedCoach ?? null,
+        );
+        persistSessionCoachType(nextId, resolvedCoach);
+        setActiveCoachType(resolvedCoach);
+        if (nextId !== previousId) {
           setSessionId(nextId);
         }
       }
@@ -444,18 +466,9 @@ export default function ChatClient() {
         } else {
           window.localStorage.removeItem("currentSessionStage");
         }
-        if (history.coachType) {
-          updateSessionMeta(sessionId, { coachType: history.coachType });
-          setActiveCoachType(history.coachType);
-        } else {
-          const storedCoach = readStoredSessionCoachType(sessionId);
-          if (storedCoach) {
-            updateSessionMeta(sessionId, { coachType: storedCoach });
-            setActiveCoachType(storedCoach);
-          } else {
-            setActiveCoachType(null);
-          }
-        }
+        const normalizedCoach = normalizeCoachTypeValue(history.coachType);
+        updateSessionMeta(sessionId, { coachType: normalizedCoach });
+        setActiveCoachType(normalizedCoach);
       } catch (error) {
         if (canceled) return;
 
@@ -466,24 +479,27 @@ export default function ChatClient() {
             );
             if (canceled) return;
             const now = Date.now();
+            const normalizedCoach = normalizeCoachTypeValue(created.coachType);
             const newSession: SessionSummary = {
               sessionId: created.sessionId,
               stage: created.stage,
-              coachType: created.coachType,
+              coachType: normalizedCoach,
               createdAt: now,
               updatedAt: now,
             };
             setSessions((prev) => [newSession, ...prev.filter((s) => s.sessionId !== sessionId)]);
             window.localStorage.setItem("currentSessionId", created.sessionId);
             window.localStorage.setItem("currentSessionStage", created.stage);
-            setActiveCoachType(created.coachType);
+            sessionIdRef.current = created.sessionId;
+            persistSessionCoachType(created.sessionId, normalizedCoach);
+            setActiveCoachType(normalizedCoach);
             setSessionId(created.sessionId);
             pushAssistant("前回のセッションが見つからなかったため、新しいセッションを開始しました。");
             logEvent("session_created", {
               from: "history_restore_recovery",
               sessionId: created.sessionId,
               stage: created.stage,
-              coachType: created.coachType,
+              coachType: normalizedCoach,
             });
           } catch (creationError) {
             if (canceled) return;
@@ -593,12 +609,13 @@ export default function ChatClient() {
       if (meta?.stage) {
         window.localStorage.setItem("currentSessionStage", meta.stage);
       }
-      if (meta?.coachType) {
-        setActiveCoachType(meta.coachType);
-      } else {
-        const storedCoach = readStoredSessionCoachType(id);
-        setActiveCoachType(storedCoach);
-      }
+      sessionIdRef.current = id;
+      const storedCoach = readStoredSessionCoachType(id);
+      const resolvedCoach = normalizeCoachTypeValue(
+        meta?.coachType ?? storedCoach ?? null,
+      );
+      persistSessionCoachType(id, resolvedCoach);
+      setActiveCoachType(resolvedCoach);
       setSessionId(id);
     },
     [sessions],
@@ -616,17 +633,20 @@ export default function ChatClient() {
         createSession(token, preferredCoachType),
       );
       const now = Date.now();
+      const normalizedCoach = normalizeCoachTypeValue(created.coachType);
       const newSession: SessionSummary = {
         sessionId: created.sessionId,
         stage: created.stage,
-        coachType: created.coachType,
+        coachType: normalizedCoach,
         createdAt: now,
         updatedAt: now,
       };
       setSessions((prev) => [newSession, ...prev]);
       window.localStorage.setItem("currentSessionId", created.sessionId);
       window.localStorage.setItem("currentSessionStage", created.stage);
-      setActiveCoachType(created.coachType);
+      sessionIdRef.current = created.sessionId;
+      persistSessionCoachType(created.sessionId, normalizedCoach);
+      setActiveCoachType(normalizedCoach);
       setSessionId(created.sessionId);
       setMessages([]);
       setHistoryHasMore(false);
@@ -636,7 +656,7 @@ export default function ChatClient() {
         from: "user_action",
         sessionId: created.sessionId,
         stage: created.stage,
-        coachType: created.coachType,
+        coachType: normalizedCoach,
       });
     } catch (error) {
       const message = getErrorMessage(error);
@@ -692,8 +712,15 @@ export default function ChatClient() {
         callCoach({ sessionId: activeSessionId, userText: msg }, token),
       );
 
+      const now = Date.now();
       window.localStorage.setItem("currentSessionStage", reply.stage);
-      updateSessionMeta(activeSessionId, { stage: reply.stage, updatedAt: Date.now() });
+      const normalizedCoach = normalizeCoachTypeValue(reply.coachType);
+      updateSessionMeta(activeSessionId, {
+        stage: reply.stage,
+        coachType: normalizedCoach,
+        updatedAt: now,
+      });
+      setActiveCoachType(normalizedCoach);
 
       setMessages((prev) =>
         prev.map((message) =>
@@ -1102,6 +1129,10 @@ function formatSessionLabel(session: SessionSummary): string {
 
 function isCoachType(value: unknown): value is CoachType {
   return value === "akito" || value === "kanon" || value === "naruka";
+}
+
+function normalizeCoachTypeValue(value: CoachType | null | undefined): CoachType {
+  return isCoachType(value) ? value : DEFAULT_COACH_TYPE;
 }
 
 function readCoachTypeFromStorage(key: string): CoachType | null {

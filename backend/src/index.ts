@@ -587,7 +587,7 @@ async function handleCreateSession({ uid, res, body }: RequestContext & { uid: s
   const now = Date.now();
   const stage: Stage = "intro";
 
-  mmemory.set(sessionId, { messages: [], stage, coachType });
+  memory.set(sessionId, { messages: [], stage, coachType });
 
   try {
     await db
@@ -680,7 +680,11 @@ async function handleCoach(context: RequestContext & { uid: string }) {
       stage: payload.stage,
       state: payload.state,
     });
-    batch.set(ref, { stage: payload.stage, updatedAt: coachTimestamp }, { merge: true });
+    batch.set(
+      ref,
+      { stage: payload.stage, coachType, updatedAt: coachTimestamp },
+      { merge: true },
+    );
     await batch.commit();
 
     log("info", "coach_response", {
@@ -691,7 +695,7 @@ async function handleCoach(context: RequestContext & { uid: string }) {
       coachType,
     });
 
-    sendJson(res, 200, payload);
+    sendJson(res, 200, { ...payload, coachType });
   } catch (error) {
     log("error", "failed_to_process_coach_request", {
       uid,
@@ -783,6 +787,20 @@ async function loadHistory(uid: string, sessionId: string): Promise<SessionCache
     : {};
 
   const sessionStage = parseStage(sessionData.stage) ?? "intro";
+  const normalizedCoachType = normalizeCoachType(sessionData.coachType);
+  const coachType = normalizedCoachType ?? DEFAULT_COACH_TYPE;
+
+  if (!normalizedCoachType) {
+    void sessionRef
+      .set({ coachType }, { merge: true })
+      .catch((error) =>
+        log("warn", "session_coach_type_backfill_failed", {
+          uid,
+          sessionId,
+          error: serializeError(error),
+        }),
+      );
+  }
 
   const items = messagesSnapshot.docs.reduce<Msg[]>((acc, doc) => {
     const data = doc.data() as Record<string, unknown>;
@@ -818,7 +836,7 @@ async function loadHistory(uid: string, sessionId: string): Promise<SessionCache
   const result: SessionCache = {
     messages: items,
     stage: parseStage(sessionData.stage),
-    coachType: normalizeCoachType(sessionData.coachType) ?? DEFAULT_COACH_TYPE,
+    coachType,
   };
 
   memory.set(sessionId, result);
