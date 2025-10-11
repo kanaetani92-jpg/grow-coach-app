@@ -88,8 +88,6 @@ if (!globalFetch) {
 }
 const fetchFn: FetchFn = globalFetch;
 
-const memory = new Map<string, SessionCache>();
-
 const PORT = parseInt(process.env.PORT ?? "8080", 10);
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const RATE_LIMIT_MAX = parseInt(process.env.RATE_LIMIT_MAX ?? "60", 10);
@@ -350,22 +348,53 @@ const routes: Record<string, RouteHandler> = {
   "GET /api": handleApiRoot,
 };
 
-const rateLimitState = new Map<string, { count: number; expiresAt: number }>();
-function enforceRateLimit(req: http.IncomingMessage, res: http.ServerResponse): boolean {
-  const ip = getClientIp(req);
-  const now = Date.now();
-  const state = rateLimitState.get(ip);
-
-  if (!state || now > state.expiresAt) {
-    rateLimitState.set(ip, { count: 1, expiresAt: now + RATE_LIMIT_WINDOW_MS });
+async function enforceRateLimit(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+): Promise<boolean> {
+  if (RATE_LIMIT_MAX <= 0) {
     return true;
   }
-  if (state.count >= RATE_LIMIT_MAX) {
-    res.writeHead(429, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "rate limit" }));
-    return false;
+
+  const ip = getClientIp(req);
+  const now = Date.now();
+  const expiresAt = now + RATE_LIMIT_WINDOW_MS;
+
+  try {
+    const allowed = await db.runTransaction(async (tx) => {
+      const ref = db.collection("rateLimits").doc(ip);
+      const snapshot = await tx.get(ref);
+      const data = snapshot.exists ? (snapshot.data() as Record<string, unknown>) : undefined;
+
+      const currentCount = typeof data?.count === "number" ? data.count : 0;
+      const currentExpiry = typeof data?.expiresAt === "number" ? data.expiresAt : 0;
+
+      if (!data || now >= currentExpiry) {
+        tx.set(ref, { count: 1, expiresAt, updatedAt: now }, { merge: true });
+        return true;
+      }
+
+      if (currentCount >= RATE_LIMIT_MAX) {
+        return false;
+      }
+
+      tx.update(ref, { count: currentCount + 1, updatedAt: now });
+      return true;
+    });
+
+    if (!allowed) {
+      res.writeHead(429, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "rate limit" }));
+      return false;
+    }
+  } catch (error) {
+    log("error", "rate_limit_enforcement_failed", {
+      ip,
+      error: serializeError(error),
+    });
+    // Fail-open to avoid blocking legitimate traffic on transient errors.
   }
-  state.count++;
+
   return true;
 }
 
@@ -383,7 +412,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (!enforceRateLimit(req, res)) {
+    if (!(await enforceRateLimit(req, res))) {
       return;
     }
 
@@ -587,8 +616,6 @@ async function handleCreateSession({ uid, res, body }: RequestContext & { uid: s
   const now = Date.now();
   const stage: Stage = "intro";
 
-  memory.set(sessionId, { messages: [], stage, coachType });
-
   try {
     await db
       .collection("users")
@@ -600,7 +627,6 @@ async function handleCreateSession({ uid, res, body }: RequestContext & { uid: s
     log("info", "session_created", { uid, sessionId, coachType });
     sendJson(res, 200, { sessionId, stage, coachType });
   } catch (error) {
-    memory.delete(sessionId);
     log("error", "failed_to_create_session", {
       uid,
       sessionId,
@@ -628,7 +654,7 @@ async function handleCoach(context: RequestContext & { uid: string }) {
   }
 
   const userText = sanitizeUserText(userTextField);
-   if (!userText) {
+  if (!userText) {
     sendJson(res, 400, { error: "invalid text" });
     return;
   }
@@ -652,17 +678,6 @@ async function handleCoach(context: RequestContext & { uid: string }) {
 
     const userTimestamp = Date.now();
     const coachTimestamp = userTimestamp + 1;
-
-    const nextMessages = [...history.messages];
-    nextMessages.push({ role: "user", content: userText, createdAt: userTimestamp });
-    nextMessages.push({
-      role: "coach",
-      content: payload.message,
-      createdAt: coachTimestamp,
-      stage: payload.stage,
-      state: payload.state,
-    });
-    memory.set(sessionId, { messages: nextMessages, stage: payload.stage, coachType });
 
     const ref = db
       .collection("users")
@@ -759,18 +774,6 @@ function clampLimit(raw: number): number {
 }
 
 async function loadHistory(uid: string, sessionId: string): Promise<SessionCache> {
-  const cached = memory.get(sessionId);
-    if (cached) {
-    const normalizedCoachType =
-      normalizeCoachType(cached.coachType) ?? DEFAULT_COACH_TYPE;
-    if (cached.coachType !== normalizedCoachType) {
-      const normalized = { ...cached, coachType: normalizedCoachType };
-      memory.set(sessionId, normalized);
-      return normalized;
-    }
-    return cached;
-  }
-
   const sessionRef = db
     .collection("users")
     .doc(uid)
@@ -838,8 +841,6 @@ async function loadHistory(uid: string, sessionId: string): Promise<SessionCache
     stage: parseStage(sessionData.stage),
     coachType,
   };
-
-  memory.set(sessionId, result);
   return result;
 }
 

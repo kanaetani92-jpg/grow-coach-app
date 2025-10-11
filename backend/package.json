@@ -8,16 +8,10 @@
   "devDependencies": {
     "typescript": "^5.x",
     "tsx": "^4.x",
-    "@types/node": "^20.x",
-    "@types/express": "^4.x"
+    "@types/node": "^20.x"
   },
   "dependencies": {
-    "express": "^4.x",
-    "cors": "^2.x",
-    "zod": "^3.x",
-    "firebase-admin": "^13.x",
-    "@google/generative-ai": "^0.x",
-    "dotenv": "^16.x"
+    "firebase-admin": "^13.x"
   }
 }
 
