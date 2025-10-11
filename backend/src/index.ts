@@ -54,6 +54,16 @@ type CoachType = "akito" | "kanon" | "naruka";
 type SessionCache = { messages: Msg[]; stage?: Stage; coachType?: CoachType };
 type CoachPayload = { stage: Stage; message: string; state: CoachingState };
 
+type FaceSheetFields = {
+  basicInfo: string;
+  values: string;
+  challenges: string;
+  supports: string;
+  notes: string;
+};
+
+type FaceSheetData = FaceSheetFields & { updatedAt?: number };
+
 type RouteHandler = (context: RequestContext) => Promise<void> | void;
 
 type RequestContext = {
@@ -112,6 +122,17 @@ const VALID_COACH_TYPES: ReadonlySet<CoachType> = new Set([
   "kanon",
   "naruka",
 ]);
+
+const FACE_SHEET_COLLECTION = "profiles";
+const FACE_SHEET_DOC_ID = "faceSheet";
+const FACE_SHEET_FIELD_LIMIT = 1000;
+const EMPTY_FACE_SHEET: FaceSheetFields = {
+  basicInfo: "",
+  values: "",
+  challenges: "",
+  supports: "",
+  notes: "",
+};
 
 const baseGrowPrompt = String.raw`あなたは「健康心理学・行動医学・行動科学」の知見を用い、GROWモデルとコーチング基盤スキル、棚卸し（資源の可視化）を実装する**ウェブアプリ内コーチ**です。対象は医療従事者を含む一般成人。短時間で安全に“気づき→選択肢→合意行動”へ導きます。
 
@@ -347,6 +368,8 @@ const routes: Record<string, RouteHandler> = {
   "GET /api/sessions": requireAuth(handleListSessions),
   "POST /api/coach": requireAuth(handleCoach),
   "GET /api/history": requireAuth(handleHistory),
+  "GET /api/facesheet": requireAuth(handleGetFaceSheet),
+  "POST /api/facesheet": requireAuth(handleSaveFaceSheet),
   "GET /api": handleApiRoot,
 };
 
@@ -542,6 +565,8 @@ function handleApiRoot({ res }: RequestContext) {
       "/api/sessions (GET)",
       "/api/coach (POST)",
       "/api/history (GET)",
+      "/api/facesheet (GET)",
+      "/api/facesheet (POST)",
     ],
     time: new Date().toISOString(),
   });
@@ -574,6 +599,41 @@ async function handleListSessions({ uid, res }: RequestContext & { uid: string }
   } catch (error) {
     log("error", "failed_to_list_sessions", { uid, error: serializeError(error) });
     sendJson(res, 500, { error: "failed to list sessions" });
+  }
+}
+
+async function handleGetFaceSheet({ uid, res }: RequestContext & { uid: string }) {
+  try {
+    const faceSheet = await loadFaceSheet(uid);
+    sendJson(res, 200, { faceSheet });
+  } catch (error) {
+    log("error", "failed_to_load_face_sheet", { uid, error: serializeError(error) });
+    sendJson(res, 500, { error: "failed to load face sheet" });
+  }
+}
+
+async function handleSaveFaceSheet({ uid, res, body }: RequestContext & { uid: string }) {
+  if (!body || typeof body !== "object") {
+    sendJson(res, 400, { error: "invalid body" });
+    return;
+  }
+
+  try {
+    const payload = sanitizeFaceSheetPayload(body as Record<string, unknown>);
+    const now = Date.now();
+    await db
+      .collection("users")
+      .doc(uid)
+      .collection(FACE_SHEET_COLLECTION)
+      .doc(FACE_SHEET_DOC_ID)
+      .set({ ...payload, updatedAt: now }, { merge: true });
+
+    const stored: FaceSheetData = { ...payload, updatedAt: now };
+    log("info", "face_sheet_saved", { uid });
+    sendJson(res, 200, { faceSheet: stored });
+  } catch (error) {
+    log("error", "failed_to_save_face_sheet", { uid, error: serializeError(error) });
+    sendJson(res, 500, { error: "failed to save face sheet" });
   }
 }
 
@@ -635,17 +695,23 @@ async function handleCoach(context: RequestContext & { uid: string }) {
 
   try {
     const history = await loadHistory(uid, sessionId);
+    const faceSheet = await loadFaceSheet(uid);
     const coachType = history.coachType ?? DEFAULT_COACH_TYPE;
     const prompt = coachPrompts[coachType] ?? coachPrompts[DEFAULT_COACH_TYPE];
 
-    const parts = [
-      { text: prompt },
+    const parts: Array<{ text: string }> = [{ text: prompt }];
+    const faceSheetPrompt = formatFaceSheetForPrompt(faceSheet);
+    if (faceSheetPrompt) {
+      parts.push({ text: faceSheetPrompt });
+    }
+
+    parts.push(
       ...history.messages.map((m) => ({ text: `${m.role.toUpperCase()}: ${m.content}` })),
       { text: `USER: ${userText}` },
       {
-      text: "指示を厳守し、出力は必ず1) 'Coaching' セクション 2) 'State JSON' セクション（指定スキーマの完全なJSONオブジェクト）の順で示すこと。",
+        text: "指示を厳守し、出力は必ず1) 'Coaching' セクション 2) 'State JSON' セクション（指定スキーマの完全なJSONオブジェクト）の順で示すこと。",
       },
-    ];
+    );
 
     const text = await generateGeminiContent(parts);
     const payload = parseCoachPayload(text, history.stage ?? "intro");
@@ -843,6 +909,28 @@ async function loadHistory(uid: string, sessionId: string): Promise<SessionCache
   return result;
 }
 
+async function loadFaceSheet(uid: string): Promise<FaceSheetData> {
+  const snapshot = await db
+    .collection("users")
+    .doc(uid)
+    .collection(FACE_SHEET_COLLECTION)
+    .doc(FACE_SHEET_DOC_ID)
+    .get();
+
+  if (!snapshot.exists) {
+    return { ...EMPTY_FACE_SHEET };
+  }
+
+  const raw = snapshot.data() as Record<string, unknown> | undefined;
+  if (!raw) {
+    return { ...EMPTY_FACE_SHEET };
+  }
+
+  const parsed = sanitizeFaceSheetPayload(raw);
+  const updatedAt = typeof raw.updatedAt === "number" ? raw.updatedAt : undefined;
+  return { ...parsed, updatedAt };
+}
+
 type GeminiResponse = {
   candidates?: Array<{
     content?: {
@@ -899,6 +987,58 @@ function sanitizeUserText(value: string): string {
     return "";
   }
   return trimmed;
+}
+
+function sanitizeFaceSheetField(value: unknown): string {
+  if (typeof value !== "string") {
+    return "";
+  }
+  const cleaned = value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
+  const trimmed = cleaned.trim();
+  if (!trimmed) {
+    return "";
+  }
+  if (trimmed.length > FACE_SHEET_FIELD_LIMIT) {
+    return trimmed.slice(0, FACE_SHEET_FIELD_LIMIT);
+  }
+  return trimmed;
+}
+
+function sanitizeFaceSheetPayload(data: Record<string, unknown>): FaceSheetFields {
+  return {
+    basicInfo: sanitizeFaceSheetField(data.basicInfo),
+    values: sanitizeFaceSheetField(data.values),
+    challenges: sanitizeFaceSheetField(data.challenges),
+    supports: sanitizeFaceSheetField(data.supports),
+    notes: sanitizeFaceSheetField(data.notes),
+  };
+}
+
+function formatFaceSheetForPrompt(faceSheet: FaceSheetData | null | undefined): string | null {
+  if (!faceSheet) {
+    return null;
+  }
+  const entries: string[] = [];
+  const pushEntry = (label: string, value: string) => {
+    if (!value) return;
+    const normalized = value.replace(/\r?\n/g, "\n  ");
+    entries.push(`- ${label}: ${normalized}`);
+  };
+
+  pushEntry("基本情報", faceSheet.basicInfo);
+  pushEntry("大切にしていること・価値観", faceSheet.values);
+  pushEntry("現在の状況・課題", faceSheet.challenges);
+  pushEntry("支えになっている資源", faceSheet.supports);
+  pushEntry("コーチへのメモ", faceSheet.notes);
+
+  if (entries.length === 0) {
+    return null;
+  }
+
+  return [
+    "SYSTEM: 以下はクライアントから事前に共有されたフェイスシート情報です。会話では重複質問を避け、内容を踏まえてサポートしてください。",
+    ...entries,
+  ].join("\n");
 }
 
 function parseCoachPayload(text: string, fallbackStage: Stage = "intro"): CoachPayload {

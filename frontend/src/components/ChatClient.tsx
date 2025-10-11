@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { auth } from "@/lib/firebase";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import {
@@ -8,11 +8,14 @@ import {
   callCoach,
   createSession,
   fetchHistory,
+  getFaceSheet,
   listSessions,
   type HistoryMessage,
   type CoachType,
   type CoachingState,
+  type FaceSheet,
   type SessionSummary,
+  saveFaceSheet,
 } from "@/lib/api";
 
 const DEFAULT_COACH_TYPE: CoachType = "akito";
@@ -63,6 +66,14 @@ import { logEvent } from "@/lib/logger";
 
 const HISTORY_PAGE_SIZE = 25;
 const MAX_MESSAGE_LENGTH = 5000;
+const FACE_SHEET_FIELD_LIMIT = 1000;
+const EMPTY_FACE_SHEET: FaceSheet = {
+  basicInfo: "",
+  values: "",
+  challenges: "",
+  supports: "",
+  notes: "",
+};
 type Msg = {
   id: string;
   role: "user" | "assistant";
@@ -74,6 +85,12 @@ type Msg = {
 };
 
 type ToastState = { type: "success" | "error"; message: string } | null;
+
+type QuickAction = {
+  label: string;
+  prompt: string;
+  branches: string[];
+};
 
 export default function ChatClient() {
   const [authed, setAuthed] = useState(false);
@@ -94,6 +111,11 @@ export default function ChatClient() {
   const [isOnline, setIsOnline] = useState<boolean>(() =>
     typeof window === "undefined" ? true : window.navigator.onLine,
   );
+  const [faceSheet, setFaceSheet] = useState<FaceSheet>(EMPTY_FACE_SHEET);
+  const [faceSheetLoading, setFaceSheetLoading] = useState(false);
+  const [faceSheetSaving, setFaceSheetSaving] = useState(false);
+  const [faceSheetError, setFaceSheetError] = useState<string | null>(null);
+  const [faceSheetSavedAt, setFaceSheetSavedAt] = useState<number | null>(null);
     const [preferredCoachType, setPreferredCoachType] = useState<CoachType>(() =>
     getInitialPreferredCoachType(),
   );
@@ -237,11 +259,103 @@ export default function ChatClient() {
     }
   }, []);
 
+  useEffect(() => {
+    if (!authed) {
+      setFaceSheet(EMPTY_FACE_SHEET);
+      setFaceSheetSavedAt(null);
+      setFaceSheetError(null);
+      setFaceSheetLoading(false);
+      setFaceSheetSaving(false);
+      return;
+    }
+
+    let canceled = false;
+    setFaceSheetLoading(true);
+    setFaceSheetError(null);
+
+    callWithAuth((token) => getFaceSheet(token))
+      .then((response) => {
+        if (canceled) return;
+        const fetched = response.faceSheet ?? EMPTY_FACE_SHEET;
+        setFaceSheet({
+          basicInfo: fetched.basicInfo ?? "",
+          values: fetched.values ?? "",
+          challenges: fetched.challenges ?? "",
+          supports: fetched.supports ?? "",
+          notes: fetched.notes ?? "",
+        });
+        setFaceSheetSavedAt(fetched.updatedAt ?? null);
+      })
+      .catch((error) => {
+        if (canceled) return;
+        const message = getErrorMessage(error);
+        setFaceSheetError(message);
+      })
+      .finally(() => {
+        if (!canceled) {
+          setFaceSheetLoading(false);
+        }
+      });
+
+    return () => {
+      canceled = true;
+    };
+  }, [authed, callWithAuth]);
+
+  const handleSaveFaceSheet = useCallback(async () => {
+    if (!authed) {
+      showToast("error", "サインイン後にフェイスシートを保存できます。");
+      return;
+    }
+    if (!isOnline) {
+      showToast("error", "オフラインのためフェイスシートを保存できません。接続を確認してください。");
+      return;
+    }
+
+    const payload: FaceSheet = {
+      basicInfo: faceSheet.basicInfo.slice(0, FACE_SHEET_FIELD_LIMIT),
+      values: faceSheet.values.slice(0, FACE_SHEET_FIELD_LIMIT),
+      challenges: faceSheet.challenges.slice(0, FACE_SHEET_FIELD_LIMIT),
+      supports: faceSheet.supports.slice(0, FACE_SHEET_FIELD_LIMIT),
+      notes: faceSheet.notes.slice(0, FACE_SHEET_FIELD_LIMIT),
+    };
+
+    setFaceSheetSaving(true);
+    setFaceSheetError(null);
+    try {
+      const response = await callWithAuth((token) => saveFaceSheet(payload, token));
+      const saved = response.faceSheet ?? payload;
+      setFaceSheet({
+        basicInfo: saved.basicInfo ?? "",
+        values: saved.values ?? "",
+        challenges: saved.challenges ?? "",
+        supports: saved.supports ?? "",
+        notes: saved.notes ?? "",
+      });
+      setFaceSheetSavedAt(saved.updatedAt ?? Date.now());
+      showToast("success", "フェイスシートを保存しました。");
+    } catch (error) {
+      const message = getErrorMessage(error);
+      setFaceSheetError(message);
+      showToast("error", message);
+    } finally {
+      setFaceSheetSaving(false);
+    }
+  }, [authed, callWithAuth, faceSheet, showToast, isOnline]);
+
+  const handleFaceSheetSubmit = useCallback(
+    (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      void handleSaveFaceSheet();
+    },
+    [handleSaveFaceSheet],
+  );
+
   const updateSessionMeta = useCallback((id: string, updates: Partial<SessionSummary>) => {
     setSessions((prev) => {
-    if (updates.coachType) {
-      persistSessionCoachType(id, updates.coachType);
-    }
+      if (updates.coachType) {
+        persistSessionCoachType(id, updates.coachType);
+      }
       const mapped = prev.map((session) =>
         session.sessionId === id ? { ...session, ...updates } : session,
       );
@@ -363,6 +477,11 @@ export default function ChatClient() {
         tokenRef.current = null;
         window.localStorage.removeItem("currentSessionId");
         window.localStorage.removeItem("currentSessionStage");
+        setFaceSheet(EMPTY_FACE_SHEET);
+        setFaceSheetSavedAt(null);
+        setFaceSheetError(null);
+        setFaceSheetLoading(false);
+        setFaceSheetSaving(false);
         return;
       }
 
@@ -641,8 +760,57 @@ export default function ChatClient() {
     if (!activeSessionId) return "";
     return sessions.some((session) => session.sessionId === activeSessionId) ? activeSessionId : "";
   }, [activeSessionId, sessions]);
-  const quickActions = useMemo(
-    () => ["今日のテーマを選ぶ", "目標を設定", "最近の出来事を振り返る"],
+  const quickActions = useMemo<QuickAction[]>(
+    () => [
+      {
+        label: "何でもトーク",
+        prompt: "何でもトークから始めたいです。",
+        branches: [
+          "最近の出来事や気持ちを整理したい",
+          "雑談しながら考えをまとめたい",
+          "今のモヤモヤを言語化したい",
+        ],
+      },
+      {
+        label: "望む未来の実現に向けた対話",
+        prompt: "望む未来の実現に向けた対話をお願いします。",
+        branches: [
+          "実現したい未来像を明確にしたい",
+          "現状とのギャップや課題を整理したい",
+          "次の一歩や行動プランを一緒に考えたい",
+        ],
+      },
+    ],
+    [],
+  );
+  const faceSheetFieldConfigs = useMemo(
+    () => [
+      {
+        key: "basicInfo" as const,
+        label: "基本情報",
+        placeholder: "例：氏名、担当業務、勤務形態など",
+      },
+      {
+        key: "values" as const,
+        label: "大切にしていること・価値観",
+        placeholder: "例：仕事や暮らしで大切にしている価値観やこだわり",
+      },
+      {
+        key: "challenges" as const,
+        label: "現在の状況・課題",
+        placeholder: "例：最近気になっていること、整理したい課題",
+      },
+      {
+        key: "supports" as const,
+        label: "支えになっている資源",
+        placeholder: "例：頼れる人や制度、活用している工夫",
+      },
+      {
+        key: "notes" as const,
+        label: "コーチへのメモ",
+        placeholder: "例：配慮してほしいこと、避けたい話題など",
+      },
+    ],
     [],
   );
   const remainingChars = useMemo(
@@ -802,6 +970,58 @@ export default function ChatClient() {
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden sm:flex-row">
           <aside className="flex min-h-0 w-full flex-shrink-0 flex-col border-b border-slate-200 bg-slate-50/80 sm:w-72 sm:border-b-0 sm:border-r sm:bg-white">
             <div className="space-y-4 px-5 py-5">
+              <div className="rounded-2xl border border-slate-300 bg-white px-4 py-4 shadow-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <h2 className="text-base font-semibold text-slate-900">フェイスシート</h2>
+                  <span className="text-[11px] text-slate-500" aria-live="polite">
+                    {faceSheetSavedAt ? `最終更新: ${formatRelativeTime(faceSheetSavedAt)}` : "未保存"}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-slate-500">
+                  事前に共有しておきたい情報をまとめると、コーチが背景を理解した状態で対話を始められます。
+                </p>
+                {faceSheetError ? (
+                  <p className="mt-2 text-xs text-rose-600" aria-live="polite">
+                    {faceSheetError}
+                  </p>
+                ) : null}
+                {faceSheetLoading ? (
+                  <p className="mt-3 text-xs text-slate-500" aria-live="polite">
+                    フェイスシートを読み込んでいます...
+                  </p>
+                ) : (
+                  <form onSubmit={handleFaceSheetSubmit} className="mt-3 space-y-3">
+                    {faceSheetFieldConfigs.map((field) => (
+                      <label key={field.key} className="block space-y-1">
+                        <span className="text-xs font-semibold text-slate-700">{field.label}</span>
+                        <textarea
+                          value={faceSheet[field.key]}
+                          onChange={(event) => {
+                            const nextValue = event.target.value.slice(0, FACE_SHEET_FIELD_LIMIT);
+                            setFaceSheet((prev) => ({ ...prev, [field.key]: nextValue }));
+                          }}
+                          placeholder={field.placeholder}
+                          maxLength={FACE_SHEET_FIELD_LIMIT}
+                          rows={3}
+                          className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm transition focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-200"
+                        />
+                      </label>
+                    ))}
+                    <div className="flex items-center justify-between gap-2 pt-1">
+                      <span className="text-[11px] text-slate-500">
+                        1項目あたり最大{FACE_SHEET_FIELD_LIMIT}文字
+                      </span>
+                      <button
+                        type="submit"
+                        className="inline-flex items-center gap-2 rounded-full bg-teal-600 px-4 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-teal-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-60"
+                        disabled={faceSheetSaving || faceSheetLoading || !isOnline}
+                      >
+                        {faceSheetSaving ? "保存中..." : "保存"}
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </div>
               <div>
                 <h2 className="text-base font-semibold text-slate-900">コーチの選択</h2>
                 <p className="text-xs text-slate-500">新しいセッション開始時に利用するコーチを選べます。</p>
@@ -906,19 +1126,31 @@ export default function ChatClient() {
                   <p className="rounded-2xl border border-slate-200 bg-white px-5 py-4 text-base shadow-sm">
                     {restoring ? "会話履歴を読み込んでいます..." : "コーチに相談したい内容を入力して会話を始めましょう。"}
                   </p>
-                  <div className="flex flex-wrap items-center justify-center gap-3">
+                  <div className="flex w-full flex-col items-stretch justify-center gap-4 text-left sm:flex-row sm:flex-wrap sm:gap-6 sm:text-left">
                     {quickActions.map((action) => (
-                      <button
-                        key={action}
-                        type="button"
-                        onClick={() => {
-                          setInput(action);
-                          showToast("success", `${action} を入力欄にセットしました。`);
-                        }}
-                        className="rounded-full border border-teal-200 bg-white px-4 py-2 text-sm font-medium text-teal-700 transition hover:border-teal-300 hover:bg-teal-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2"
+                      <div
+                        key={action.label}
+                        className="w-full max-w-xs rounded-2xl border border-teal-200 bg-white px-5 py-4 text-left shadow-sm"
                       >
-                        {action}
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setInput(action.prompt);
+                            showToast("success", `${action.label} を入力欄にセットしました。`);
+                          }}
+                          className="w-full rounded-full border border-teal-500 bg-teal-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-teal-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2"
+                        >
+                          {action.label}
+                        </button>
+                        <ul className="mt-3 space-y-1 text-left text-xs text-slate-600">
+                          {action.branches.map((branch) => (
+                            <li key={branch} className="flex items-start gap-2">
+                              <span className="mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-teal-400" aria-hidden="true" />
+                              <span className="flex-1 leading-relaxed">{branch}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
                     ))}
                   </div>
                 </div>

@@ -60,6 +60,15 @@ export type SessionSummary = {
   updatedAt?: number;
 };
 
+export type FaceSheet = {
+  basicInfo: string;
+  values: string;
+  challenges: string;
+  supports: string;
+  notes: string;
+  updatedAt?: number;
+};
+
 function getApiBase(): string {
   const raw =
     process.env.NEXT_PUBLIC_BACKEND_BASE_URL ||
@@ -140,6 +149,26 @@ export async function callCoach(
     method: "POST",
     headers: { Authorization: `Bearer ${idToken}` },
     body: JSON.stringify(payload),
+  });
+}
+
+export async function getFaceSheet(
+  idToken: string,
+): Promise<{ faceSheet: FaceSheet }> {
+  return apiFetch("/facesheet", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${idToken}` },
+  });
+}
+
+export async function saveFaceSheet(
+  faceSheet: FaceSheet,
+  idToken: string,
+): Promise<{ faceSheet: FaceSheet }> {
+  return apiFetch("/facesheet", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify(faceSheet),
   });
 }
 
