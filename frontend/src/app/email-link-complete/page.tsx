@@ -13,13 +13,28 @@ import { FirebaseError } from "firebase/app";
 import { useRouter } from "next/navigation";
 
 import { auth } from "@/lib/firebase";
-import { ApiError, createSession } from "@/lib/api";
+import { ApiError, createSession, type CoachType } from "@/lib/api";
 import { getErrorMessage } from "@/lib/errors";
 import { logEvent } from "@/lib/logger";
 
 const EMAIL_STORAGE_KEY = "emailForSignIn";
 const ACTIVE_SESSION_KEY = "currentSessionId";
 const ACTIVE_STAGE_KEY = "currentSessionStage";
+const ACTIVE_COACH_TYPE_KEY = "currentCoachType";
+
+const DEFAULT_COACH_TYPE: CoachType = "akito";
+
+function isCoachType(value: unknown): value is CoachType {
+  return value === "akito" || value === "kanon" || value === "naruka";
+}
+
+function getPreferredCoachType(): CoachType {
+  if (typeof window === "undefined") {
+    return DEFAULT_COACH_TYPE;
+  }
+  const stored = window.localStorage.getItem("preferredCoachType");
+  return isCoachType(stored) ? stored : DEFAULT_COACH_TYPE;
+}
 
 export default function EmailLinkCompletePage() {
   const router = useRouter();
@@ -57,17 +72,20 @@ export default function EmailLinkCompletePage() {
           throw new Error("サインイン後のユーザー情報を取得できませんでした。");
         }
 
+        const coachType = getPreferredCoachType();
+
         let token = await user.getIdToken();
-        const session = await createSession(token).catch(async (apiError) => {
+        const session = await createSession(token, coachType).catch(async (apiError) => {
           if (apiError instanceof ApiError && apiError.status === 401) {
             token = await user.getIdToken(true);
-            return await createSession(token);
+            return await createSession(token, coachType);
           }
           throw apiError;
         });
 
         window.localStorage.setItem(ACTIVE_SESSION_KEY, session.sessionId);
         window.localStorage.setItem(ACTIVE_STAGE_KEY, session.stage);
+        window.localStorage.setItem(ACTIVE_COACH_TYPE_KEY, session.coachType);
         logEvent("session_created", {
           from: "email-link-complete",
           sessionId: session.sessionId,
