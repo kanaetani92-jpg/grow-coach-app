@@ -206,9 +206,8 @@ export default function EmailLinkCompletePage() {
       ) : null}
 
       <div className="rounded border border-gray-200 bg-gray-50 p-4 text-xs text-gray-600">
-        <p>ログインリンクが届かない場合は、迷惑メールフォルダをご確認ください。</p>
-        <p className="mt-2">
-          それでも解決しない場合は、ネットワーク環境を確認のうえ再度リンクを送信してください。
+       <p>
+          メールアドレスの誤りや迷惑メール（プロモーション／その他）を確認し、通信が安定していることを確かめてから「メールでサインインリンクを送る」をタップしてください。
         </p>
       </div>
     </main>

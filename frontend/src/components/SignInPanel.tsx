@@ -55,6 +55,10 @@ export default function SignInPanel() {
       <div className="mt-6">
         <EmailLinkForm />
       </div>
+      <p className="mt-4 text-xs text-slate-500">
+        メールアドレスの誤りや迷惑メール（プロモーション／その他）を確認し、通信が安定していることを確かめてから
+        「メールでサインインリンクを送る」をタップしてください。
+      </p>
     </section>
   );
 }
