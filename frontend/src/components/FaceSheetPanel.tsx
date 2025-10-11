@@ -1,4 +1,4 @@
-import { type FormEvent } from "react";
+import { type FormEvent, useEffect, useRef } from "react";
 
 import type {
   CoachingState,
@@ -39,6 +39,10 @@ type FaceSheetPanelProps = {
   onSubmit: (category: DialogueCategory) => void;
   savingCategory: DialogueCategory | null;
   disabled: boolean;
+  onSectionSelect: (category: DialogueCategory) => void;
+  activeCategory: DialogueCategory;
+  focusCategory: DialogueCategory | null;
+  focusToken: number;
 };
 
 export default function FaceSheetPanel({
@@ -54,6 +58,10 @@ export default function FaceSheetPanel({
   onSubmit,
   savingCategory,
   disabled,
+  onSectionSelect,
+  activeCategory,
+  focusCategory,
+  focusToken,
 }: FaceSheetPanelProps) {
   return (
     <aside className="order-3 flex min-h-0 w-full flex-shrink-0 flex-col border-t border-slate-200 bg-white px-5 py-5 sm:px-6 sm:py-6 lg:order-3 lg:w-96 lg:border-l lg:border-t-0 lg:bg-white/80">
@@ -77,6 +85,27 @@ export default function FaceSheetPanel({
       {disabled ? (
         <p className="mt-3 text-xs text-slate-500">オンラインに接続すると対話メモを保存できます。</p>
       ) : null}
+      <nav className="mt-4 flex flex-wrap gap-2" aria-label="対話メモの入力先">
+        {DIALOGUE_SECTIONS.map(({ category, title }) => {
+          const isActive = activeCategory === category;
+          return (
+            <button
+              key={category}
+              type="button"
+              onClick={() => onSectionSelect(category)}
+              className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2 ${
+                isActive
+                  ? "border-teal-500 bg-teal-600 text-white shadow-sm"
+                  : "border-teal-200 bg-white text-teal-700 shadow-sm hover:bg-teal-50"
+              } disabled:cursor-not-allowed disabled:opacity-60`}
+              aria-pressed={isActive}
+              disabled={disabled}
+            >
+              {title}
+            </button>
+          );
+        })}
+      </nav>
       <div className="mt-4 flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto text-sm text-slate-700">
         <FaceSheetSummary state={state} stageKey={stageKey} stageDisplay={stageDisplay} />
         {DIALOGUE_SECTIONS.map(({ category, title, description }) => (
@@ -91,6 +120,9 @@ export default function FaceSheetPanel({
             onSubmit={() => onSubmit(category)}
             saving={savingCategory === category}
             disabled={disabled}
+            focusTrigger={focusCategory === category ? focusToken : null}
+            isActive={activeCategory === category}
+            onSelect={onSectionSelect}
           />
         ))}
       </div>
@@ -222,6 +254,9 @@ type DialogueSectionProps = {
   onSubmit: () => void;
   saving: boolean;
   disabled: boolean;
+  focusTrigger: number | null;
+  isActive: boolean;
+  onSelect: (category: DialogueCategory) => void;
 };
 
 function DialogueSection({
@@ -234,14 +269,41 @@ function DialogueSection({
   onSubmit,
   saving,
   disabled,
+  focusTrigger,
+  isActive,
+  onSelect,
 }: DialogueSectionProps) {
+  const sectionRef = useRef<HTMLElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    if (focusTrigger === null) {
+      return;
+    }
+    const sectionEl = sectionRef.current;
+    const textareaEl = textareaRef.current;
+    if (sectionEl) {
+      sectionEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+    if (textareaEl) {
+      textareaEl.focus();
+      const length = textareaEl.value.length;
+      textareaEl.setSelectionRange(length, length);
+    }
+  }, [focusTrigger]);
+
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     onSubmit();
   };
 
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-sm text-slate-700 shadow-sm">
+    <section
+      ref={sectionRef}
+      className={`rounded-2xl border bg-white px-4 py-4 text-sm text-slate-700 shadow-sm transition ${
+        isActive ? "border-teal-300 ring-2 ring-teal-100" : "border-slate-200"
+      }`}
+    >
       <div>
         <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
         <p className="mt-1 text-xs text-slate-500">{description}</p>
@@ -255,6 +317,8 @@ function DialogueSection({
           placeholder="ここに記録を入力"
           disabled={saving || disabled}
           aria-label={`${title}を入力`}
+          ref={textareaRef}
+          onFocus={() => onSelect(category)}
         />
         <div className="flex justify-end">
           <button

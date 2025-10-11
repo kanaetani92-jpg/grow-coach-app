@@ -131,6 +131,10 @@ export default function ChatClient() {
     createEmptyDialogueInputs(),
   );
   const [dialogueSaving, setDialogueSaving] = useState<DialogueCategory | null>(null);
+  const [activeDialogueCategory, setActiveDialogueCategory] =
+    useState<DialogueCategory>("anythingTalk");
+  const [dialogueFocusCategory, setDialogueFocusCategory] = useState<DialogueCategory | null>(null);
+  const [dialogueFocusToken, setDialogueFocusToken] = useState(0);
   const activeCoachDetails = useMemo(
     () => (activeCoachType ? COACH_DETAILS[activeCoachType] : null),
     [activeCoachType],
@@ -698,6 +702,16 @@ export default function ChatClient() {
     [],
   );
 
+  const handleDialogueShortcut = useCallback(
+    (category: DialogueCategory) => {
+      if (dialogueDisabled) return;
+      setActiveDialogueCategory(category);
+      setDialogueFocusCategory(category);
+      setDialogueFocusToken((token) => token + 1);
+    },
+    [dialogueDisabled],
+  );
+
   const handleDialogueSave = useCallback(
     async (category: DialogueCategory) => {
       if (!sessionId) {
@@ -1236,6 +1250,10 @@ export default function ChatClient() {
             onSubmit={handleDialogueSave}
             savingCategory={dialogueSaving}
             disabled={dialogueDisabled}
+            onSectionSelect={handleDialogueShortcut}
+            activeCategory={activeDialogueCategory}
+            focusCategory={dialogueFocusCategory}
+            focusToken={dialogueFocusToken}
           />
         </div>
       </div>
