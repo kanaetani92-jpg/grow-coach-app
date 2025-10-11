@@ -1,8 +1,16 @@
 "use client";
 
+import { useState } from "react";
+
 export default function FaceSheetForm() {
+  const [isOpen, setIsOpen] = useState(true);
+
   return (
-    <details className="group rounded-3xl border border-slate-200 bg-white p-6 shadow-sm" defaultOpen>
+    <details
+      className="group rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"
+      open={isOpen}
+      onToggle={(event) => setIsOpen(event.currentTarget.open)}
+    >
       <summary className="flex cursor-pointer items-center justify-between gap-4 text-left text-slate-900">
         <div>
           <h2 className="text-lg font-semibold text-slate-900">フェイスシート（基本設定）</h2>
