@@ -1,7 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import type { FormEvent } from "react";
 
 import { logEvent } from "@/lib/logger";
 import { loadLatestCheckin, saveCheckin } from "@/lib/storage";
