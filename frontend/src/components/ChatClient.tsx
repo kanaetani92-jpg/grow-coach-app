@@ -5,15 +5,20 @@ import { auth } from "@/lib/firebase";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import {
   ApiError,
+  addDialogueEntry,
   callCoach,
   createSession,
+  fetchFaceSheet,
   fetchHistory,
   listSessions,
   type HistoryMessage,
   type CoachType,
   type CoachingState,
+  type DialogueCategory,
+  type DialogueEntry,
   type SessionSummary,
 } from "@/lib/api";
+import FaceSheetPanel from "@/components/FaceSheetPanel";
 
 const DEFAULT_COACH_TYPE: CoachType = "akito";
 
@@ -75,6 +80,22 @@ type Msg = {
 
 type ToastState = { type: "success" | "error"; message: string } | null;
 
+type DialogueMap = Record<DialogueCategory, DialogueEntry[]>;
+
+function createEmptyDialogues(): DialogueMap {
+  return {
+    anythingTalk: [],
+    futureVision: [],
+  };
+}
+
+function createEmptyDialogueInputs(): Record<DialogueCategory, string> {
+  return {
+    anythingTalk: "",
+    futureVision: "",
+  };
+}
+
 export default function ChatClient() {
   const [authed, setAuthed] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -94,12 +115,22 @@ export default function ChatClient() {
   const [isOnline, setIsOnline] = useState<boolean>(() =>
     typeof window === "undefined" ? true : window.navigator.onLine,
   );
-    const [preferredCoachType, setPreferredCoachType] = useState<CoachType>(() =>
+  const [preferredCoachType, setPreferredCoachType] = useState<CoachType>(() =>
     getInitialPreferredCoachType(),
   );
   const [activeCoachType, setActiveCoachType] = useState<CoachType | null>(() =>
     getInitialActiveCoachType(),
   );
+  const [coachingState, setCoachingState] = useState<CoachingState | null>(null);
+  const [faceSheetStage, setFaceSheetStage] = useState<string | null>(null);
+  const [faceSheetLoading, setFaceSheetLoading] = useState(false);
+  const [faceSheetError, setFaceSheetError] = useState<string | null>(null);
+  const [dialogueError, setDialogueError] = useState<string | null>(null);
+  const [dialogues, setDialogues] = useState<DialogueMap>(() => createEmptyDialogues());
+  const [dialogueInputs, setDialogueInputs] = useState<Record<DialogueCategory, string>>(() =>
+    createEmptyDialogueInputs(),
+  );
+  const [dialogueSaving, setDialogueSaving] = useState<DialogueCategory | null>(null);
   const activeCoachDetails = useMemo(
     () => (activeCoachType ? COACH_DETAILS[activeCoachType] : null),
     [activeCoachType],
@@ -118,6 +149,14 @@ export default function ChatClient() {
     () => coachDisplayName.replace(/\s+/g, "\n"),
     [coachDisplayName],
   );
+  const faceSheetStageDisplay = useMemo(() => {
+    if (!faceSheetStage) {
+      return "未設定";
+    }
+    const label = STAGE_DISPLAY_LABELS[faceSheetStage];
+    return label ?? faceSheetStage;
+  }, [faceSheetStage]);
+  const dialogueDisabled = !sessionId || !isOnline || restoring || faceSheetLoading;
   const tokenRef = useRef<string | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -360,6 +399,14 @@ export default function ChatClient() {
         setHistoryCursor(null);
         setHistoryHasMore(false);
         setSessionError(null);
+        setCoachingState(null);
+        setFaceSheetStage(null);
+        setFaceSheetError(null);
+        setDialogueError(null);
+        setDialogues(createEmptyDialogues());
+        setDialogueInputs(createEmptyDialogueInputs());
+        setFaceSheetLoading(false);
+        setDialogueSaving(null);
         tokenRef.current = null;
         window.localStorage.removeItem("currentSessionId");
         window.localStorage.removeItem("currentSessionStage");
@@ -386,7 +433,11 @@ export default function ChatClient() {
   }, [messages, loading, scrollToBottom]);
 
     const pushAssistant = useCallback(
-    (text: string, createdAt?: number, meta?: { stage?: string | null; state?: CoachingState | null }) => {
+    (
+      text: string,
+      createdAt?: number,
+      meta?: { stage?: string | null; state?: CoachingState | null },
+    ) => {
       shouldAutoScrollRef.current = true;
       setMessages((prev) => {
         const updated = [...prev];
@@ -409,9 +460,15 @@ export default function ChatClient() {
         }
         return [...updated, entry];
       });
+      if (meta?.stage) {
+        setFaceSheetStage(meta.stage);
+      }
+      if (meta?.state) {
+        setCoachingState(meta.state);
+      }
     },
     [],
-  )      
+  )
 
   useEffect(() => {
     if (!authed || !sessionId) return;
@@ -435,6 +492,18 @@ export default function ChatClient() {
           .filter((m): m is Msg => m !== null);
 
         setMessages(restored);
+        const latestStateMessage = restored
+          .filter((item) => item.role === "assistant" && item.state)
+          .sort((a, b) => a.createdAt - b.createdAt)
+          .pop();
+        setCoachingState(latestStateMessage?.state ?? null);
+        if (history.stage) {
+          setFaceSheetStage(history.stage);
+        } else if (latestStateMessage?.stage) {
+          setFaceSheetStage(latestStateMessage.stage);
+        } else {
+          setFaceSheetStage(null);
+        }
         setHistoryHasMore(Boolean(history.hasMore));
         setHistoryCursor(history.cursor ?? null);
 
@@ -467,6 +536,12 @@ export default function ChatClient() {
             window.localStorage.setItem("currentSessionId", created.sessionId);
             window.localStorage.setItem("currentSessionStage", created.stage);
             setActiveCoachType(created.coachType);
+            setCoachingState(null);
+            setFaceSheetStage(created.stage);
+            setDialogues(createEmptyDialogues());
+            setDialogueInputs(createEmptyDialogueInputs());
+            setFaceSheetError(null);
+            setDialogueError(null);
             setSessionId(created.sessionId);
             pushAssistant("前回のセッションが見つからなかったため、新しいセッションを開始しました。");
             logEvent("session_created", {
@@ -486,6 +561,8 @@ export default function ChatClient() {
                 createdAt: Date.now(),
               },
             ]);
+            setCoachingState(null);
+            setFaceSheetStage(null);
             logEvent("history_restore_failed", {
               sessionId,
               message: `recreate_failed:${message}`,
@@ -501,6 +578,8 @@ export default function ChatClient() {
               createdAt: Date.now(),
             },
           ]);
+          setCoachingState(null);
+          setFaceSheetStage(null);
           logEvent("history_restore_failed", { sessionId, message });
         }
       } finally {
@@ -513,6 +592,60 @@ export default function ChatClient() {
       canceled = true;
     };
   }, [authed, sessionId, callWithAuth, pushAssistant, updateSessionMeta, preferredCoachType]);
+
+  useEffect(() => {
+    if (!authed || !sessionId) {
+      setFaceSheetLoading(false);
+      setFaceSheetError(null);
+      setDialogueError(null);
+      setDialogues(createEmptyDialogues());
+      setDialogueInputs(createEmptyDialogueInputs());
+      if (!sessionId) {
+        setCoachingState(null);
+        setFaceSheetStage(null);
+      }
+      return;
+    }
+
+    let canceled = false;
+    setCoachingState(null);
+    setFaceSheetStage(null);
+    setFaceSheetLoading(true);
+    setFaceSheetError(null);
+    setDialogueError(null);
+    setDialogues(createEmptyDialogues());
+    setDialogueInputs(createEmptyDialogueInputs());
+
+    void callWithAuth((token) => fetchFaceSheet(sessionId, token))
+      .then((data) => {
+        if (canceled) return;
+        setDialogues({
+          anythingTalk: data.dialogues.anythingTalk ?? [],
+          futureVision: data.dialogues.futureVision ?? [],
+        });
+        if (data.faceSheet) {
+          setCoachingState(data.faceSheet);
+        }
+        if (data.stage) {
+          setFaceSheetStage(data.stage);
+        }
+      })
+      .catch((error) => {
+        if (canceled) return;
+        const message = getErrorMessage(error);
+        setFaceSheetError(message);
+        setDialogueError(message);
+      })
+      .finally(() => {
+        if (!canceled) {
+          setFaceSheetLoading(false);
+        }
+      });
+
+    return () => {
+      canceled = true;
+    };
+  }, [authed, sessionId, callWithAuth]);
 
   const loadOlderMessages = useCallback(async () => {
     if (!sessionId || !historyHasMore || historyCursor === null || loadingMore || restoring) {
@@ -557,6 +690,60 @@ export default function ChatClient() {
       setLoadingMore(false);
     }
   }, [sessionId, historyHasMore, historyCursor, loadingMore, restoring, callWithAuth, showToast]);
+
+  const handleDialogueInputChange = useCallback(
+    (category: DialogueCategory, value: string) => {
+      setDialogueInputs((prev) => ({ ...prev, [category]: value }));
+    },
+    [],
+  );
+
+  const handleDialogueSave = useCallback(
+    async (category: DialogueCategory) => {
+      if (!sessionId) {
+        showToast("error", "セッションが選択されていません。");
+        return;
+      }
+      if (!isOnline) {
+        showToast("error", "オフラインのため保存できません。接続を確認してください。");
+        return;
+      }
+      if (restoring || faceSheetLoading) {
+        showToast("error", "読み込みが完了してから保存してください。");
+        return;
+      }
+
+      const content = dialogueInputs[category]?.trim();
+      if (!content) {
+        showToast("error", "入力内容を確認してください。");
+        return;
+      }
+
+      setDialogueSaving(category);
+      try {
+        const { entry } = await callWithAuth((token) =>
+          addDialogueEntry({ sessionId, category, content }, token),
+        );
+        setDialogues((prev) => {
+          const next: DialogueMap = {
+            ...prev,
+            [category]: [...prev[category], entry].sort((a, b) => a.createdAt - b.createdAt),
+          };
+          return next;
+        });
+        setDialogueInputs((prev) => ({ ...prev, [category]: "" }));
+        setDialogueError(null);
+        showToast("success", "対話を保存しました。");
+      } catch (error) {
+        const message = getErrorMessage(error);
+        setDialogueError(message);
+        showToast("error", message);
+      } finally {
+        setDialogueSaving(null);
+      }
+    },
+    [sessionId, isOnline, restoring, faceSheetLoading, dialogueInputs, callWithAuth, showToast],
+  );
 
   useEffect(() => {
     const el = scrollerRef.current;
@@ -799,98 +986,99 @@ export default function ChatClient() {
             </div>
           )}
         </header>
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden sm:flex-row">
-          <aside className="flex min-h-0 w-full flex-shrink-0 flex-col border-b border-slate-200 bg-slate-50/80 sm:w-72 sm:border-b-0 sm:border-r sm:bg-white">
-            <div className="space-y-4 px-5 py-5">
-              <div>
-                <h2 className="text-base font-semibold text-slate-900">コーチの選択</h2>
-                <p className="text-xs text-slate-500">新しいセッション開始時に利用するコーチを選べます。</p>
-                <div className="mt-3 space-y-2">
-                  {COACH_SELECTIONS.map((option) => {
-                    const isActive = preferredCoachType === option.value;
-                    return (
-                      <label
-                        key={option.value}
-                        className={`flex cursor-pointer flex-col gap-1 rounded-2xl border px-3 py-3 text-left transition ${
-                          isActive
-                            ? "border-teal-500 bg-white shadow-sm shadow-teal-500/20"
-                            : "border-slate-300 bg-white/80 hover:border-teal-400"
-                        }`}
-                      >
-                        <span className="flex items-center gap-2">
-                          <input
-                            type="radio"
-                            name="preferred-coach"
-                            value={option.value}
-                            checked={isActive}
-                            onChange={() => setPreferredCoachType(option.value)}
-                            className="h-4 w-4 border-slate-300 text-teal-600 focus:ring-2 focus:ring-teal-500"
-                          />
-                          <span className="text-sm font-semibold text-slate-900">{option.name}</span>
-                        </span>
-                        <span className="text-xs text-teal-700">{option.tagline}</span>
-                        <span className="text-xs text-slate-500">{option.description}</span>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-              <div>
-                <h2 className="text-base font-semibold text-slate-900">セッション</h2>
-                <p className="text-xs text-slate-500">過去のやり取りを一覧で確認できます。</p>
-              </div>
-              {!sessionsLoading && !sessionError && sessions.length > 0 ? (
-                <div>
-                  <div className="mb-1 space-y-1">
-                    <label htmlFor="session-select" className="block text-xs font-medium text-slate-500">
-                      過去のセッションを選択
-                    </label>
-                    <p className="text-[11px] text-slate-500" aria-live="polite">
-                      新しいセッション用コーチ:
-                      <span className="ml-1 font-semibold text-slate-900">{preferredCoachDetails.name}</span>
-                    </p>
-                  </div>
-                  <div className="rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus-within:border-teal-500 focus-within:ring-2 focus-within:ring-teal-100">
-                    <select
-                      id="session-select"
-                      value={sessionSelectValue}
-                      onChange={(event) => {
-                        const value = event.target.value;
-                        if (value) {
-                          handleSelectSession(value);
-                        }
-                      }}
-                      className="w-full bg-transparent text-sm text-slate-900 focus:outline-none"
-                      aria-label="セッションを選択"
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
+        <aside className="order-1 flex min-h-0 w-full flex-shrink-0 flex-col border-b border-slate-200 bg-slate-50/80 sm:border-b-0 sm:border-r sm:bg-white lg:w-72">
+          <div className="space-y-4 px-5 py-5">
+            <div>
+              <h2 className="text-base font-semibold text-slate-900">コーチの選択</h2>
+              <p className="text-xs text-slate-500">新しいセッション開始時に利用するコーチを選べます。</p>
+              <div className="mt-3 space-y-2">
+                {COACH_SELECTIONS.map((option) => {
+                  const isActive = preferredCoachType === option.value;
+                  return (
+                    <label
+                      key={option.value}
+                      className={`flex cursor-pointer flex-col gap-1 rounded-2xl border px-3 py-3 text-left transition ${
+                        isActive
+                          ? "border-teal-500 bg-white shadow-sm shadow-teal-500/20"
+                          : "border-slate-300 bg-white/80 hover:border-teal-400"
+                      }`}
                     >
-                      <option value="" disabled>
-                        セッションを選択
-                      </option>
-                      {sessions.map((session) => {
-                        const label = formatSessionLabel(session);
-                        const stageKey = session.stage ?? "";
-                        const stageDisplay = stageKey
-                          ? STAGE_DISPLAY_LABELS[stageKey] ?? stageKey
-                          : "-";
-                        const stageLabel = `ステージ: ${stageDisplay}`;
-                        const coachDetails = session.coachType
-                          ? COACH_DETAILS[session.coachType]
-                          : null;
-                        const coachLabel = coachDetails?.name ?? "未設定";
-                        const relative = formatRelativeTime(session.updatedAt ?? session.createdAt);
-                        return (
-                          <option key={session.sessionId} value={session.sessionId}>
-                            {`${label} ｜ コーチ: ${coachLabel} ｜ ${stageLabel} ｜ ${relative}`}
-                          </option>
-                        );
-                      })}
-                    </select>
-                  </div>
-                </div>
-              ) : null}
+                      <span className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          name="preferred-coach"
+                          value={option.value}
+                          checked={isActive}
+                          onChange={() => setPreferredCoachType(option.value)}
+                          className="h-4 w-4 border-slate-300 text-teal-600 focus:ring-2 focus:ring-teal-500"
+                        />
+                        <span className="text-sm font-semibold text-slate-900">{option.name}</span>
+                      </span>
+                      <span className="text-xs text-teal-700">{option.tagline}</span>
+                      <span className="text-xs text-slate-500">{option.description}</span>
+                    </label>
+                  );
+                })}
+              </div>
             </div>
-            {/* 過去のセッション一覧はプルダウンのみ表示する仕様に変更したため非表示 */}
-          </aside>
+            <div>
+              <h2 className="text-base font-semibold text-slate-900">セッション</h2>
+              <p className="text-xs text-slate-500">過去のやり取りを一覧で確認できます。</p>
+            </div>
+            {!sessionsLoading && !sessionError && sessions.length > 0 ? (
+              <div>
+                <div className="mb-1 space-y-1">
+                  <label htmlFor="session-select" className="block text-xs font-medium text-slate-500">
+                    過去のセッションを選択
+                  </label>
+                  <p className="text-[11px] text-slate-500" aria-live="polite">
+                    新しいセッション用コーチ:
+                    <span className="ml-1 font-semibold text-slate-900">{preferredCoachDetails.name}</span>
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus-within:border-teal-500 focus-within:ring-2 focus-within:ring-teal-100">
+                  <select
+                    id="session-select"
+                    value={sessionSelectValue}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      if (value) {
+                        handleSelectSession(value);
+                      }
+                    }}
+                    className="w-full bg-transparent text-sm text-slate-900 focus:outline-none"
+                    aria-label="セッションを選択"
+                  >
+                    <option value="" disabled>
+                      セッションを選択
+                    </option>
+                    {sessions.map((session) => {
+                      const label = formatSessionLabel(session);
+                      const stageKey = session.stage ?? "";
+                      const stageDisplay = stageKey
+                        ? STAGE_DISPLAY_LABELS[stageKey] ?? stageKey
+                        : "-";
+                      const stageLabel = `ステージ: ${stageDisplay}`;
+                      const coachDetails = session.coachType
+                        ? COACH_DETAILS[session.coachType]
+                        : null;
+                      const coachLabel = coachDetails?.name ?? "未設定";
+                      const relative = formatRelativeTime(session.updatedAt ?? session.createdAt);
+                      return (
+                        <option key={session.sessionId} value={session.sessionId}>
+                          {`${label} ｜ コーチ: ${coachLabel} ｜ ${stageLabel} ｜ ${relative}`}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+              </div>
+            ) : null}
+          </div>
+          {/* 過去のセッション一覧はプルダウンのみ表示する仕様に変更したため非表示 */}
+        </aside>
+        <div className="order-2 flex min-h-0 flex-1 flex-col lg:flex-row">
           <div className="flex min-h-0 flex-1 flex-col bg-slate-50">
             <div
               ref={scrollerRef}
@@ -1035,7 +1223,22 @@ export default function ChatClient() {
               </div>
             </form>
           </div>
+          <FaceSheetPanel
+            state={coachingState}
+            stageKey={faceSheetStage}
+            stageDisplay={faceSheetStageDisplay}
+            loading={faceSheetLoading}
+            error={faceSheetError}
+            dialogueError={dialogueError}
+            dialogues={dialogues}
+            inputs={dialogueInputs}
+            onInputChange={handleDialogueInputChange}
+            onSubmit={handleDialogueSave}
+            savingCategory={dialogueSaving}
+            disabled={dialogueDisabled}
+          />
         </div>
+      </div>
       {toast && (
         <div
           role="status"

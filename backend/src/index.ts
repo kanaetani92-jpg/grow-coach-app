@@ -54,6 +54,15 @@ type CoachType = "akito" | "kanon" | "naruka";
 type SessionCache = { messages: Msg[]; stage?: Stage; coachType?: CoachType };
 type CoachPayload = { stage: Stage; message: string; state: CoachingState };
 
+type DialogueCategory = "anythingTalk" | "futureVision";
+
+type DialogueEntry = {
+  id: string;
+  category: DialogueCategory;
+  content: string;
+  createdAt: number;
+};
+
 type RouteHandler = (context: RequestContext) => Promise<void> | void;
 
 type RequestContext = {
@@ -111,6 +120,11 @@ const VALID_COACH_TYPES: ReadonlySet<CoachType> = new Set([
   "akito",
   "kanon",
   "naruka",
+]);
+
+const DIALOGUE_CATEGORIES: ReadonlySet<DialogueCategory> = new Set([
+  "anythingTalk",
+  "futureVision",
 ]);
 
 const baseGrowPrompt = String.raw`あなたは「健康心理学・行動医学・行動科学」の知見を用い、GROWモデルとコーチング基盤スキル、棚卸し（資源の可視化）を実装する**ウェブアプリ内コーチ**です。対象は医療従事者を含む一般成人。短時間で安全に“気づき→選択肢→合意行動”へ導きます。
@@ -347,6 +361,8 @@ const routes: Record<string, RouteHandler> = {
   "GET /api/sessions": requireAuth(handleListSessions),
   "POST /api/coach": requireAuth(handleCoach),
   "GET /api/history": requireAuth(handleHistory),
+  "GET /api/face-sheet": requireAuth(handleFaceSheet),
+  "POST /api/face-sheet/dialogues": requireAuth(handleCreateDialogue),
   "GET /api": handleApiRoot,
 };
 
@@ -542,6 +558,8 @@ function handleApiRoot({ res }: RequestContext) {
       "/api/sessions (GET)",
       "/api/coach (POST)",
       "/api/history (GET)",
+      "/api/face-sheet (GET)",
+      "/api/face-sheet/dialogues (POST)",
     ],
     time: new Date().toISOString(),
   });
@@ -745,6 +763,140 @@ async function handleHistory(context: RequestContext & { uid: string }) {
       error: serializeError(error),
     });
     sendJson(res, 500, { error: "failed to fetch history" });
+  }
+}
+
+async function handleFaceSheet(context: RequestContext & { uid: string }) {
+  const { uid, res, query } = context;
+  const sessionParam = Array.isArray(query["sessionId"]) ? query["sessionId"][0] : query["sessionId"];
+  const sessionId = typeof sessionParam === "string" ? sessionParam : undefined;
+
+  if (!sessionId) {
+    sendJson(res, 400, { error: "missing sessionId" });
+    return;
+  }
+
+  try {
+    const history = await loadHistory(uid, sessionId);
+    const latestStateMessage = history.messages
+      .filter((item) => item.role === "coach" && item.state)
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .pop();
+
+    const faceSheet = latestStateMessage?.state ?? null;
+    const stage = history.stage ?? latestStateMessage?.stage ?? null;
+
+    const sessionRef = db
+      .collection("users")
+      .doc(uid)
+      .collection("sessions")
+      .doc(sessionId);
+
+    const dialoguesSnapshot = await sessionRef
+      .collection("dialogues")
+      .orderBy("createdAt", "asc")
+      .get();
+
+    const dialogues: Record<DialogueCategory, DialogueEntry[]> = {
+      anythingTalk: [],
+      futureVision: [],
+    };
+
+    for (const doc of dialoguesSnapshot.docs) {
+      const data = doc.data() as Record<string, unknown>;
+      const category = normalizeDialogueCategory(data.category);
+      const content = typeof data.content === "string" ? data.content : "";
+      const createdAt = typeof data.createdAt === "number" ? data.createdAt : undefined;
+      if (!category || !content || !createdAt) {
+        continue;
+      }
+      dialogues[category].push({
+        id: doc.id,
+        category,
+        content,
+        createdAt,
+      });
+    }
+
+    sendJson(res, 200, {
+      sessionId,
+      stage,
+      faceSheet,
+      dialogues,
+    });
+  } catch (error) {
+    log("error", "failed_to_fetch_face_sheet", {
+      uid,
+      sessionId,
+      error: serializeError(error),
+    });
+    sendJson(res, 500, { error: "failed to fetch face sheet" });
+  }
+}
+
+async function handleCreateDialogue(context: RequestContext & { uid: string }) {
+  const { uid, res, body } = context;
+
+  if (!body || typeof body !== "object") {
+    sendJson(res, 400, { error: "invalid body" });
+    return;
+  }
+
+  const sessionId = getStringField(body, "sessionId");
+  const category = normalizeDialogueCategory((body as Record<string, unknown>).category);
+  const contentRaw = (body as Record<string, unknown>).content;
+  const contentValue = typeof contentRaw === "string" ? contentRaw : undefined;
+  const content = contentValue ? sanitizeDialogueContent(contentValue) : "";
+
+  if (!sessionId || !category) {
+    sendJson(res, 400, { error: "invalid body" });
+    return;
+  }
+
+  if (!content) {
+    sendJson(res, 400, { error: "content is required" });
+    return;
+  }
+
+  try {
+    const sessionRef = db
+      .collection("users")
+      .doc(uid)
+      .collection("sessions")
+      .doc(sessionId);
+
+    const snapshot = await sessionRef.get();
+    if (!snapshot.exists) {
+      sendJson(res, 404, { error: "session not found" });
+      return;
+    }
+
+    const createdAt = Date.now();
+    const entryData = { category, content, createdAt };
+
+    const batch = db.batch();
+    const docRef = sessionRef.collection("dialogues").doc();
+    batch.set(docRef, entryData);
+    batch.set(sessionRef, { updatedAt: createdAt }, { merge: true });
+    await batch.commit();
+
+    const entry: DialogueEntry = {
+      id: docRef.id,
+      category,
+      content,
+      createdAt,
+    };
+
+    log("info", "dialogue_saved", { uid, sessionId, category, createdAt });
+    sendJson(res, 200, { entry });
+  } catch (error) {
+    log("error", "failed_to_save_dialogue", {
+      uid,
+      sessionId,
+      category,
+      error: serializeError(error),
+    });
+    sendJson(res, 500, { error: "failed to save dialogue" });
   }
 }
 
@@ -1160,11 +1312,38 @@ function normalizeCoachType(value: unknown): CoachType | undefined {
   const trimmed = value.trim().toLowerCase();
   if (!trimmed) {
     return undefined;
-    }
+  }
 
   return VALID_COACH_TYPES.has(trimmed as CoachType)
     ? (trimmed as CoachType)
     : undefined;
+}
+
+function normalizeDialogueCategory(value: unknown): DialogueCategory | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  return DIALOGUE_CATEGORIES.has(trimmed as DialogueCategory)
+    ? (trimmed as DialogueCategory)
+    : undefined;
+}
+
+function sanitizeDialogueContent(value: string): string {
+  const normalizedNewline = value.replace(/\r\n?/g, "\n");
+  const withoutControl = normalizedNewline.replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, "");
+  const trimmed = withoutControl.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  const limit = 4000;
+  return trimmed.length > limit ? trimmed.slice(0, limit) : trimmed;
 }
 
 function normalizeStage(value: unknown): Stage | undefined {
