@@ -187,8 +187,16 @@ export default function ChatClient() {
     if (typeof window === "undefined") return;
     if (activeCoachType) {
       window.localStorage.setItem("currentCoachType", activeCoachType);
+      const activeSessionId = sessionIdRef.current;
+      if (activeSessionId) {
+        persistSessionCoachType(activeSessionId, activeCoachType);
+      }
     } else {
       window.localStorage.removeItem("currentCoachType");
+      const activeSessionId = sessionIdRef.current;
+      if (activeSessionId) {
+        clearStoredSessionCoachType(activeSessionId);
+      }
     }
   }, [activeCoachType]);
 
@@ -231,6 +239,9 @@ export default function ChatClient() {
 
   const updateSessionMeta = useCallback((id: string, updates: Partial<SessionSummary>) => {
     setSessions((prev) => {
+    if (updates.coachType) {
+      persistSessionCoachType(id, updates.coachType);
+    }
       const mapped = prev.map((session) =>
         session.sessionId === id ? { ...session, ...updates } : session,
       );
@@ -252,7 +263,16 @@ export default function ChatClient() {
         );
       }
       const { sessions: fetched } = await callWithAuth((token) => listSessions(token));
-      let workingSessions = [...fetched].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+      let workingSessions = [...fetched]
+        .map((session) => {
+          if (session.coachType) {
+            persistSessionCoachType(session.sessionId, session.coachType);
+            return session;
+          }
+          const storedCoach = readStoredSessionCoachType(session.sessionId);
+          return storedCoach ? { ...session, coachType: storedCoach } : session;
+        })
+        .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
 
       const storedId =
         typeof window !== "undefined" ? window.localStorage.getItem("currentSessionId") : null;
@@ -308,7 +328,12 @@ export default function ChatClient() {
         } else {
           window.localStorage.removeItem("currentSessionStage");
         }
-        setActiveCoachType(nextMeta?.coachType ?? null);
+        if (nextMeta?.coachType) {
+          setActiveCoachType(nextMeta.coachType);
+        } else {
+          const storedCoach = readStoredSessionCoachType(nextId);
+          setActiveCoachType(storedCoach);
+        }
         if (nextId !== sessionIdRef.current) {
           setSessionId(nextId);
         }
@@ -423,7 +448,13 @@ export default function ChatClient() {
           updateSessionMeta(sessionId, { coachType: history.coachType });
           setActiveCoachType(history.coachType);
         } else {
-          setActiveCoachType(null);
+          const storedCoach = readStoredSessionCoachType(sessionId);
+          if (storedCoach) {
+            updateSessionMeta(sessionId, { coachType: storedCoach });
+            setActiveCoachType(storedCoach);
+          } else {
+            setActiveCoachType(null);
+          }
         }
       } catch (error) {
         if (canceled) return;
@@ -562,7 +593,12 @@ export default function ChatClient() {
       if (meta?.stage) {
         window.localStorage.setItem("currentSessionStage", meta.stage);
       }
-      setActiveCoachType(meta?.coachType ?? null);
+      if (meta?.coachType) {
+        setActiveCoachType(meta.coachType);
+      } else {
+        const storedCoach = readStoredSessionCoachType(id);
+        setActiveCoachType(storedCoach);
+      }
       setSessionId(id);
     },
     [sessions],
@@ -1082,6 +1118,32 @@ function getInitialPreferredCoachType(): CoachType {
 
 function getInitialActiveCoachType(): CoachType | null {
   return readCoachTypeFromStorage("currentCoachType");
+}
+
+function getSessionCoachStorageKey(sessionId: string): string {
+  return `sessionCoachType:${sessionId}`;
+}
+
+function readStoredSessionCoachType(sessionId: string): CoachType | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const stored = window.localStorage.getItem(getSessionCoachStorageKey(sessionId));
+  return isCoachType(stored) ? stored : null;
+}
+
+function persistSessionCoachType(sessionId: string, coachType: CoachType): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(getSessionCoachStorageKey(sessionId), coachType);
+}
+
+function clearStoredSessionCoachType(sessionId: string): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.removeItem(getSessionCoachStorageKey(sessionId));
 }
 
 function formatRelativeTime(timestamp?: number): string {
