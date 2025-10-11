@@ -60,6 +60,22 @@ export type SessionSummary = {
   updatedAt?: number;
 };
 
+export type DialogueCategory = "anythingTalk" | "futureVision";
+
+export type DialogueEntry = {
+  id: string;
+  category: DialogueCategory;
+  content: string;
+  createdAt: number;
+};
+
+export type FaceSheetResponse = {
+  sessionId: string;
+  stage: string | null;
+  faceSheet: CoachingState | null;
+  dialogues: Record<DialogueCategory, DialogueEntry[]>;
+};
+
 function getApiBase(): string {
   const raw =
     process.env.NEXT_PUBLIC_BACKEND_BASE_URL ||
@@ -164,5 +180,27 @@ export async function fetchHistory(
   return apiFetch(`/history?${params.toString()}`, {
     method: "GET",
     headers: { Authorization: `Bearer ${idToken}` },
+  });
+}
+
+export async function fetchFaceSheet(
+  sessionId: string,
+  idToken: string,
+): Promise<FaceSheetResponse> {
+  const params = new URLSearchParams({ sessionId });
+  return apiFetch(`/face-sheet?${params.toString()}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${idToken}` },
+  });
+}
+
+export async function addDialogueEntry(
+  payload: { sessionId: string; category: DialogueCategory; content: string },
+  idToken: string,
+): Promise<{ entry: DialogueEntry }> {
+  return apiFetch("/face-sheet/dialogues", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify(payload),
   });
 }
