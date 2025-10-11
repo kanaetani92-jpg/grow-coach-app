@@ -90,6 +90,8 @@ const fetchFn: FetchFn = globalFetch;
 
 const memory = new Map<string, SessionCache>();
 
+const MAX_FACE_SHEET_SUMMARY_LENGTH = 1800;
+
 const PORT = parseInt(process.env.PORT ?? "8080", 10);
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const RATE_LIMIT_MAX = parseInt(process.env.RATE_LIMIT_MAX ?? "60", 10);
@@ -167,7 +169,7 @@ const baseGrowPrompt = String.raw`あなたは「健康心理学・行動医学�
 # 初回ターン（自動で行う）
 - 目的確認・同意・安心の宣言→短時間の棚卸しへブリッジ。
 - **Coaching（例）**：「本セッションは目標達成を支援するコーチングです。診断や医療指示は行いません。今日は何を扱えたら有意義でしょう？（1つだけ）」
-- **State JSON** は `stage="intro"` にし、`next_prompt_to_user` に上記の問いを入れる。
+- **State JSON** は 「stage=\"intro\"」 にし、「next_prompt_to_user」に上記の問いを入れる。
 
 # 棚卸しの質問テンプレ（必要に応じて1つずつ）
 - 価値・役割・日課：「今の生活で大切にしてきた役割/日課は何ですか？」
@@ -189,7 +191,7 @@ const baseGrowPrompt = String.raw`あなたは「健康心理学・行動医学�
 
 # データの扱い
 - ユーザー回答は逐次 **State JSON** に反映（差分でなく毎回フル）。
-- 既知情報を再利用し、重複質問を避けるため `next_prompt_to_user` を精査。
+- 既知情報を再利用し、重複質問を避けるため「next_prompt_to_user」を精査。
 
 # 典型的な停滞時の再起動フレーズ
 - 「ここまでの要点を私から1行でまとめてもよいですか？」
@@ -634,12 +636,22 @@ async function handleCoach(context: RequestContext & { uid: string }) {
   }
 
   try {
-    const history = await loadHistory(uid, sessionId);
+    const [history, faceSheetSummary] = await Promise.all([
+      loadHistory(uid, sessionId),
+      loadFaceSheet(uid),
+    ]);
     const coachType = history.coachType ?? DEFAULT_COACH_TYPE;
     const prompt = coachPrompts[coachType] ?? coachPrompts[DEFAULT_COACH_TYPE];
 
     const parts = [
       { text: prompt },
+      ...(faceSheetSummary
+        ? [
+            {
+              text: `APP_METADATA: ユーザーのフェイスシート情報\n${faceSheetSummary}`,
+            },
+          ]
+        : []),
       ...history.messages.map((m) => ({ text: `${m.role.toUpperCase()}: ${m.content}` })),
       { text: `USER: ${userText}` },
       {
@@ -841,6 +853,190 @@ async function loadHistory(uid: string, sessionId: string): Promise<SessionCache
 
   memory.set(sessionId, result);
   return result;
+}
+
+async function loadFaceSheet(uid: string): Promise<string | null> {
+  const sources: Array<{
+    name: string;
+    loader: () => Promise<Record<string, unknown> | null>;
+  }> = [
+    {
+      name: "user_doc",
+      loader: async () => {
+        const snapshot = await db.collection("users").doc(uid).get();
+        if (!snapshot.exists) return null;
+        return snapshot.data() as Record<string, unknown>;
+      },
+    },
+    {
+      name: "user_face_sheet_current",
+      loader: async () => {
+        const snapshot = await db
+          .collection("users")
+          .doc(uid)
+          .collection("faceSheet")
+          .doc("current")
+          .get();
+        if (!snapshot.exists) return null;
+        return snapshot.data() as Record<string, unknown>;
+      },
+    },
+    {
+      name: "user_face_sheet_latest",
+      loader: async () => {
+        const snapshot = await db
+          .collection("users")
+          .doc(uid)
+          .collection("faceSheet")
+          .doc("latest")
+          .get();
+        if (!snapshot.exists) return null;
+        return snapshot.data() as Record<string, unknown>;
+      },
+    },
+    {
+      name: "user_face_sheet_recent",
+      loader: async () => {
+        const snapshot = await db
+          .collection("users")
+          .doc(uid)
+          .collection("faceSheet")
+          .orderBy("updatedAt", "desc")
+          .limit(1)
+          .get();
+        if (snapshot.empty) return null;
+        return snapshot.docs[0]?.data() as Record<string, unknown>;
+      },
+    },
+    {
+      name: "global_face_sheet",
+      loader: async () => {
+        const snapshot = await db.collection("faceSheets").doc(uid).get();
+        if (!snapshot.exists) return null;
+        return snapshot.data() as Record<string, unknown>;
+      },
+    },
+  ];
+
+  for (const source of sources) {
+    try {
+      const data = await source.loader();
+      if (!data) continue;
+      const summary = summarizeFaceSheetData(data);
+      if (summary) {
+        log("info", "face_sheet_context_loaded", { uid, source: source.name });
+        return summary;
+      }
+    } catch (error) {
+      log("warn", "face_sheet_load_failed", {
+        uid,
+        source: source.name,
+        error: serializeError(error),
+      });
+    }
+  }
+
+  return null;
+}
+
+function summarizeFaceSheetData(
+  data: Record<string, unknown> | null | undefined,
+): string | null {
+  if (!data) return null;
+  const candidate = extractFaceSheetCandidate(data);
+  const summary = formatFaceSheetSummary(candidate ?? data);
+  if (!summary) return null;
+  return truncateText(summary, MAX_FACE_SHEET_SUMMARY_LENGTH);
+}
+
+function extractFaceSheetCandidate(
+  data: Record<string, unknown>,
+): unknown | undefined {
+  for (const key of [
+    "faceSheet",
+    "face_sheet",
+    "facesheet",
+    "faceSheetData",
+    "face_sheet_data",
+  ]) {
+    if (key in data) {
+      return data[key];
+    }
+  }
+
+  for (const key of ["profile", "metadata", "info"]) {
+    const nested = data[key];
+    if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+      const result = extractFaceSheetCandidate(nested as Record<string, unknown>);
+      if (result !== undefined) {
+        return result;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function formatFaceSheetSummary(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+
+  if (Array.isArray(value)) {
+    const items = value
+      .map((item) => formatFaceSheetSummary(item))
+      .filter((item): item is string => Boolean(item));
+    if (items.length === 0) return null;
+    return items.join(" / ");
+  }
+
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>);
+    const lines: string[] = [];
+    for (const [key, child] of entries) {
+      const formatted = formatFaceSheetSummary(child);
+      if (!formatted) continue;
+      const normalizedKey = formatFaceSheetLabel(key);
+      const childLines = formatted.split("\n");
+      if (childLines.length === 1) {
+        lines.push(`${normalizedKey}: ${childLines[0]}`);
+      } else {
+        lines.push(`${normalizedKey}:`);
+        for (const childLine of childLines) {
+          lines.push(`  - ${childLine}`);
+        }
+      }
+    }
+    if (lines.length === 0) return null;
+    return lines.join("\n");
+  }
+
+  try {
+    return JSON.stringify(value);
+  } catch (error) {
+    log("warn", "face_sheet_format_failed", { error: serializeError(error) });
+    return String(value);
+  }
+}
+
+function formatFaceSheetLabel(key: string): string {
+  if (!key) return "項目";
+  return key
+    .replace(/_/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .trim();
+}
+
+function truncateText(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength)}…`;
 }
 
 type GeminiResponse = {
@@ -1165,55 +1361,6 @@ function normalizeCoachType(value: unknown): CoachType | undefined {
   return VALID_COACH_TYPES.has(trimmed as CoachType)
     ? (trimmed as CoachType)
     : undefined;
-}
-
-function normalizeStage(value: unknown): Stage | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-
-   const lower = trimmed.toLowerCase();
-  if (VALID_STAGES.has(lower as Stage)) {
-    return lower as Stage;
-  }
-
-  const simplified = lower.replace(/[^a-z]/g, "");
-  switch (simplified) {
-    case "intro":
-    case "introduction":
-    case "start":
-      return "intro";
-    case "inventory":
-    case "inventry":
-    case "discover":
-      return "inventory";
-    case "g":
-    case "goal":
-      return "goal";
-    case "r":
-    case "reality":
-      return "reality";
-    case "o":
-    case "options":
-      return "options";
-    case "w":
-    case "will":
-      return "will";
-    case "wrap":
-    case "wrapup":
-    case "wrapreview":
-    case "review":
-    case "close":
-    case "closing":
-      return "closing";
-    default:
-      return undefined;
-  }
 }
 
 function parseAllowedOrigins(input: string): string[] {

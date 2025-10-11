@@ -642,7 +642,7 @@ export default function ChatClient() {
     return sessions.some((session) => session.sessionId === activeSessionId) ? activeSessionId : "";
   }, [activeSessionId, sessions]);
   const quickActions = useMemo(
-    () => ["今日のテーマを選ぶ", "目標を設定", "最近の出来事を振り返る"],
+    () => ["何でもトーク", "望む未来の実現に向けた対話"],
     [],
   );
   const remainingChars = useMemo(
