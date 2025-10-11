@@ -58,6 +58,7 @@ const STAGE_DISPLAY_LABELS: Record<string, string> = {
   will: "行動計画",
   closing: "クロージング",
 };
+import FaceSheetForm from "@/components/FaceSheetForm";
 import { getErrorMessage } from "@/lib/errors";
 import { logEvent } from "@/lib/logger";
 
@@ -799,6 +800,9 @@ export default function ChatClient() {
             </div>
           )}
         </header>
+      <div className="border-b border-slate-200 bg-slate-50/60 px-6 pb-6 pt-5 sm:px-8">
+        <FaceSheetForm />
+      </div>
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden sm:flex-row">
           <aside className="flex min-h-0 w-full flex-shrink-0 flex-col border-b border-slate-200 bg-slate-50/80 sm:w-72 sm:border-b-0 sm:border-r sm:bg-white">
             <div className="space-y-4 px-5 py-5">
