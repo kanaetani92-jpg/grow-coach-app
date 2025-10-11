@@ -926,7 +926,7 @@ export default function ChatClient() {
                       value={input}
                       onChange={(event) => setInput(event.target.value)}
                       onKeyDown={(event) => {
-                        if (event.key === "Enter" && !event.shiftKey) {
+                        if (event.key === "Enter" && event.shiftKey) {
                           event.preventDefault();
                           onSend();
                         }
@@ -948,7 +948,7 @@ export default function ChatClient() {
                   </button>
                 </div>
                 <p className="text-xs text-slate-500" aria-live="polite">
-                  Enterで送信／Shift + Enterで改行（最大5000文字・残り
+                  Enterで改行／Shift + Enterで送信（最大5000文字・残り
                   {remainingChars.toLocaleString()}文字）
                 </p>
               </div>
