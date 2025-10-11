@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect } from "react";
 
+import ChatClient from "@/components/ChatClient";
+import SignInPanel from "@/components/SignInPanel";
 import { logEvent } from "@/lib/logger";
 
 export default function Page() {
@@ -12,13 +14,13 @@ export default function Page() {
 
   return (
     <main className="min-h-screen bg-[var(--bg,#f9fafb)] px-4 py-16 text-slate-900">
-      <div className="mx-auto flex max-w-4xl flex-col gap-12">
+      <div className="mx-auto flex w-full max-w-5xl flex-col gap-12">
         <header className="flex flex-col gap-3 text-center">
           <h1 className="text-3xl font-semibold tracking-tight text-slate-900 sm:text-4xl">
             今日はどう進めますか？
           </h1>
           <p className="text-base text-slate-600 sm:text-lg">
-            目的に合わせてコーチング体験を選んでください。
+            目的に合わせてコーチング体験を選びつつ、従来のGROWセッションやコーチ選択にもアクセスできます。
           </p>
         </header>
 
@@ -50,7 +52,7 @@ export default function Page() {
           <Link
             href="/gow"
             title="実現したい“望む未来”を言語化します。期間（今日／1週間／3か月／1年）と達成の目安を明確化します。"
-            className="flex h-full flex-col justify-between rounded-3xl border border-slate-200 bg-white p-8 shadow-sm transition hover:-translate-y-1 hover:border-slate-300 hover:shadow-md focus:outline-none focus-visible:ring-4 focus-visible:ring-indigo-300"
+            className="flex h-full flex-col justify-between rounded-3xl border border-slate-200 bg-white p-8 shadow-sm transition hover:-translate-y-1 hover:border-slate-300 hover:shadow-md focus:outline-none focus-visible:ring-4 focus-visible:ring-emerald-300"
           >
             <div className="flex flex-col gap-3">
               <p className="text-sm font-semibold uppercase tracking-wide text-emerald-500">
@@ -67,6 +69,15 @@ export default function Page() {
               進む →
             </span>
           </Link>
+        </section>
+
+        <section className="grid gap-6 lg:grid-cols-[320px,1fr]" aria-label="GROWコーチング">
+          <div className="order-2 lg:order-1">
+            <SignInPanel />
+          </div>
+          <div className="order-1 lg:order-2">
+            <ChatClient />
+          </div>
         </section>
       </div>
     </main>
