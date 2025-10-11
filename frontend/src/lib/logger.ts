@@ -7,7 +7,20 @@ export type LogEventName =
   | "coach_request"
   | "coach_response"
   | "coach_failure"
-  | "history_restore_failed";
+  | "history_restore_failed"
+  | "view_home"
+  | "view_checkin"
+  | "view_gow"
+  | "view_gow_goal"
+  | "view_gow_options"
+  | "view_gow_will"
+  | "checkin_started"
+  | "checkin_completed"
+  | "goal_created"
+  | "options_created"
+  | "option_chosen"
+  | "will_created"
+  | "gow_completed";
 
 type LogPayload = Record<string, unknown>;
 
