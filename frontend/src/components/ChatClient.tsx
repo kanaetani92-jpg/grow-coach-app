@@ -641,8 +641,30 @@ export default function ChatClient() {
     if (!activeSessionId) return "";
     return sessions.some((session) => session.sessionId === activeSessionId) ? activeSessionId : "";
   }, [activeSessionId, sessions]);
-  const quickActions = useMemo(
-    () => ["今日のテーマを選ぶ", "目標を設定", "最近の出来事を振り返る"],
+  type QuickAction = {
+    key: string;
+    label: string;
+    description: string;
+    template: string;
+  };
+
+  const quickActions = useMemo<QuickAction[]>(
+    () => [
+      {
+        key: "warmup_checkin",
+        label: "何でもトーク",
+        description:
+          "本題の前に、いまの気分や近況を30秒で共有します。話したくなければスキップ可。",
+        template: `何でもトーク（チェックイン／Rの軽い導入）\nラベル候補: ウォームアップ（warmup_checkin）／チェックイン（checkin）／気分シェア（mood_share）／近況ひとこと（brief_update）／安心トーク（rapport_talk）\n説明: 本題の前に、いまの気分や近況を30秒で共有します。話したくなければスキップ可。\n補助質問例:\n- 今日の気分を一言で言うと？（例：落ち着く／そわそわ／疲れ気味）\n- 最近“うまくいったこと”を1つ教えてください。\n- 今日は本題から入りますか？それとも軽く雑談しますか？\n記録フィールド案: mood_today (0–10), free_note (short), want_small_talk (yes/no)\n完了条件: mood_today入力 または free_note記入のいずれか\nクイック版: 気分スコア（0–10）のみ`,
+      },
+      {
+        key: "grow_conversation",
+        label: "望む未来の実現に向けた対話",
+        description:
+          "実現したい“望む未来”を言語化します。期間（今日／1週間／3か月／1年）と達成の目安を明確化します。",
+        template: `望む未来の実現に向けた対話（G＝Goal／O＝Options／W＝Will）\n\n[G] ゴール設定\nラベル候補: ゴール設定（goal_setting）／未来デザイン（future_design）／ビジョン言語化（vision_define）／目標を決める（decide_goal）／方向づけ（set_direction）\n説明: 実現したい“望む未来”を言語化します。期間（今日／1週間／3か月／1年）と達成の目安を明確化します。\n補助質問例:\n- 3か月後、何ができていたら“前進”と言えますか。\n- 1週間の“できた／できない”は何で測りますか（回数・時間・行動有無など）。\n- そのゴールが“あなたにとって大事な理由”は何ですか。\n記録フィールド案: goal_text, time_horizon (today/1w/3m/1y), success_metric (text/num), importance (0–10)\n完了条件: goal_text・time_horizon・success_metricが入力済\nクイック版: 期間（今日／1週間／3か月）＋40字ゴール\n\n[O] 案だし — Options\nラベル候補: 選択肢づくり（make_options）／対策アイデア（idea_pool）／できる手（action_menu）\n説明: 2–3個の選択肢を出し、短所・長所と選択基準で見比べます。\n補助質問例:\n- 他にどんなやり方がありますか？最低でももう1案出しましょう。\n- 各案の短所・長所を一言で。\n- 選ぶ基準は何ですか（時間／効果／負担など）。\n記録フィールド案: option_1/2/3 (text), pros_cons_1/2/3 (text), chosen_option (id)\n\n[W] 踏み出し — Will\nラベル候補: 一歩を決める（decide_step）／実行プラン（action_plan）／If-Then設定（if_then_plan）\n説明: “やる一歩”をIf-Thenで確定し、開始タイミングを決めます。\n補助質問例:\n- もし（状況）なら（行動）をする—1つ作ってください。\n- 実行の妨げになりそうな障壁は？その先回り策は？\n- いつ始めますか（日時・所要）。\n記録フィールド案: if_then (text), barrier (text), anti_barrier (text), start_time (datetime)`,
+      },
+    ],
     [],
   );
   const remainingChars = useMemo(
@@ -909,15 +931,16 @@ export default function ChatClient() {
                   <div className="flex flex-wrap items-center justify-center gap-3">
                     {quickActions.map((action) => (
                       <button
-                        key={action}
+                        key={action.key}
                         type="button"
                         onClick={() => {
-                          setInput(action);
-                          showToast("success", `${action} を入力欄にセットしました。`);
+                          setInput(action.template);
+                          showToast("success", `${action.label} を入力欄にセットしました。`);
                         }}
+                        title={action.description}
                         className="rounded-full border border-teal-200 bg-white px-4 py-2 text-sm font-medium text-teal-700 transition hover:border-teal-300 hover:bg-teal-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2"
                       >
-                        {action}
+                        {action.label}
                       </button>
                     ))}
                   </div>
