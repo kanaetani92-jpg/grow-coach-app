@@ -10,8 +10,54 @@ import {
   fetchHistory,
   listSessions,
   type HistoryMessage,
+  type CoachType,
+  type CoachingState,
   type SessionSummary,
 } from "@/lib/api";
+
+const DEFAULT_COACH_TYPE: CoachType = "akito";
+
+const COACH_DETAILS: Record<CoachType, { name: string; tagline: string; description: string }> = {
+  akito: {
+    name: "真壁 彰斗",
+    tagline: "静かで信頼感のある伴走者",
+    description:
+      "エビデンスを重視し、睡眠や勤務調整などの課題を落ち着いて整理します。",
+  },
+  kanon: {
+    name: "清瀬 佳音",
+    tagline: "軽やかなユーモアで1mm前進を支える",
+    description:
+      "自己批判や先延ばしをほぐし、気軽に試せるミニ習慣を一緒に考えます。",
+  },
+  naruka: {
+    name: "武谷 成香",
+    tagline: "状況に応じてモードを切り替えるコーチ",
+    description:
+      "意思決定と行動設計を構造化し、納得できるIf-Thenプランを共に描きます。",
+  },
+};
+
+const COACH_SELECTIONS: Array<{
+  value: CoachType;
+  name: string;
+  tagline: string;
+  description: string;
+}> = [
+  { value: "akito", ...COACH_DETAILS.akito },
+  { value: "kanon", ...COACH_DETAILS.kanon },
+  { value: "naruka", ...COACH_DETAILS.naruka },
+];
+
+const STAGE_DISPLAY_LABELS: Record<string, string> = {
+  intro: "導入",
+  inventory: "棚卸し",
+  goal: "目標設定",
+  reality: "現状整理",
+  options: "選択肢検討",
+  will: "行動計画",
+  closing: "クロージング",
+};
 import { getErrorMessage } from "@/lib/errors";
 import { logEvent } from "@/lib/logger";
 
@@ -23,6 +69,8 @@ type Msg = {
   content: string;
   createdAt: number;
   status?: "sending" | "sent" | "read" | "error";
+  stage?: string;
+  state?: CoachingState;
 };
 
 type ToastState = { type: "success" | "error"; message: string } | null;
@@ -45,6 +93,20 @@ export default function ChatClient() {
   const [creatingSession, setCreatingSession] = useState(false);
   const [isOnline, setIsOnline] = useState<boolean>(() =>
     typeof window === "undefined" ? true : window.navigator.onLine,
+  );
+    const [preferredCoachType, setPreferredCoachType] = useState<CoachType>(() =>
+    getInitialPreferredCoachType(),
+  );
+  const [activeCoachType, setActiveCoachType] = useState<CoachType | null>(() =>
+    getInitialActiveCoachType(),
+  );
+  const activeCoachDetails = useMemo(
+    () => (activeCoachType ? COACH_DETAILS[activeCoachType] : null),
+    [activeCoachType],
+  );
+  const preferredCoachDetails = useMemo(
+    () => COACH_DETAILS[preferredCoachType],
+    [preferredCoachType],
   );
   const tokenRef = useRef<string | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
@@ -83,8 +145,21 @@ export default function ChatClient() {
     };
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("preferredCoachType", preferredCoachType);
+  }, [preferredCoachType]);
 
-    useEffect(() => {
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (activeCoachType) {
+      window.localStorage.setItem("currentCoachType", activeCoachType);
+    } else {
+      window.localStorage.removeItem("currentCoachType");
+    }
+  }, [activeCoachType]);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
 
     const updateStatus = () => {
@@ -138,53 +213,69 @@ export default function ChatClient() {
     setSessionsLoading(true);
     setSessionError(null);
     try {
-            if (!isOnline) {
+      if (!isOnline) {
         throw new Error(
           "オフラインのためセッションを取得できません。接続を確認して再試行してください。",
         );
       }
       const { sessions: fetched } = await callWithAuth((token) => listSessions(token));
-      const ordered = [...fetched].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
-      setSessions(ordered);
+      let workingSessions = [...fetched].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
 
-      const storedId = typeof window !== "undefined"
-        ? window.localStorage.getItem("currentSessionId")
-        : null;
+      const storedId =
+        typeof window !== "undefined" ? window.localStorage.getItem("currentSessionId") : null;
       const candidates: Array<string | null> = [
         sessionIdRef.current,
         storedId,
-        ordered[0]?.sessionId ?? null,
+        workingSessions[0]?.sessionId ?? null,
       ];
       let nextId: string | null = null;
       for (const candidate of candidates) {
-        if (candidate && ordered.some((item) => item.sessionId === candidate)) {
+        if (candidate && workingSessions.some((item) => item.sessionId === candidate)) {
           nextId = candidate;
           break;
         }
       }
 
+      let createdSession: SessionSummary | null = null;
       if (!nextId) {
-        const created = await callWithAuth((token) => createSession(token));
+        const created = await callWithAuth((token) =>
+          createSession(token, preferredCoachType),
+        );
         const now = Date.now();
-        const newSession: SessionSummary = {
+        createdSession = {
           sessionId: created.sessionId,
           stage: created.stage,
+          coachType: created.coachType,
           createdAt: now,
           updatedAt: now,
         };
-        setSessions((prev) => [newSession, ...prev]);
+        workingSessions = [createdSession, ...workingSessions];
         window.localStorage.setItem("currentSessionId", created.sessionId);
         window.localStorage.setItem("currentSessionStage", created.stage);
+        setActiveCoachType(created.coachType);
         logEvent("session_created", {
           from: "auto_create",
           sessionId: created.sessionId,
           stage: created.stage,
+          coachType: created.coachType, 
         });
         nextId = created.sessionId;
       }
 
+      setSessions(workingSessions);
+
       if (nextId) {
         window.localStorage.setItem("currentSessionId", nextId);
+        const nextMeta =
+          (createdSession && createdSession.sessionId === nextId
+            ? createdSession
+            : workingSessions.find((item) => item.sessionId === nextId)) ?? null;
+        if (nextMeta?.stage) {
+          window.localStorage.setItem("currentSessionStage", nextMeta.stage);
+        } else {
+          window.localStorage.removeItem("currentSessionStage");
+        }
+        setActiveCoachType(nextMeta?.coachType ?? null);
         if (nextId !== sessionIdRef.current) {
           setSessionId(nextId);
         }
@@ -196,7 +287,7 @@ export default function ChatClient() {
     } finally {
       setSessionsLoading(false);
     }
-    }, [authed, callWithAuth, showToast, isOnline]);
+  }, [authed, callWithAuth, showToast, isOnline, preferredCoachType]);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
@@ -236,25 +327,33 @@ export default function ChatClient() {
     scrollToBottom();
   }, [messages, loading, scrollToBottom]);
 
-  const pushAssistant = useCallback((text: string, createdAt?: number) => {
-    shouldAutoScrollRef.current = true;
-    setMessages((prev) => {
-      const updated = [...prev];
-      const lastIndex = updated.length - 1;
-      if (lastIndex >= 0 && updated[lastIndex]?.role === "user" && updated[lastIndex].status !== "error") {
-        updated[lastIndex] = { ...updated[lastIndex], status: "read" };
-      }
-      return [
-        ...updated,
-        {
-          id: `assistant-${createdAt ?? Date.now()}`,
+    const pushAssistant = useCallback(
+    (text: string, createdAt?: number, meta?: { stage?: string | null; state?: CoachingState | null }) => {
+      shouldAutoScrollRef.current = true;
+      setMessages((prev) => {
+        const updated = [...prev];
+        const lastIndex = updated.length - 1;
+        if (lastIndex >= 0 && updated[lastIndex]?.role === "user" && updated[lastIndex].status !== "error") {
+          updated[lastIndex] = { ...updated[lastIndex], status: "read" };
+        }
+        const timestamp = createdAt ?? Date.now();
+        const entry: Msg = {
+          id: `assistant-${timestamp}`,
           role: "assistant",
           content: text,
-          createdAt: createdAt ?? Date.now(),
-        },
-      ];
-    });
-  }, []);
+          createdAt: timestamp,
+        };
+        if (meta?.stage) {
+          entry.stage = meta.stage;
+        }
+          if (meta?.state) {
+          entry.state = meta.state;
+        }
+        return [...updated, entry];
+      });
+    },
+    [],
+  )      
 
   useEffect(() => {
     if (!authed || !sessionId) return;
@@ -287,29 +386,40 @@ export default function ChatClient() {
         } else {
           window.localStorage.removeItem("currentSessionStage");
         }
+        if (history.coachType) {
+          updateSessionMeta(sessionId, { coachType: history.coachType });
+          setActiveCoachType(history.coachType);
+        } else {
+          setActiveCoachType(null);
+        }
       } catch (error) {
         if (canceled) return;
 
         if (error instanceof ApiError && error.status === 404) {
           try {
-            const created = await callWithAuth((token) => createSession(token));
+            const created = await callWithAuth((token) =>
+              createSession(token, preferredCoachType),
+            );
             if (canceled) return;
             const now = Date.now();
             const newSession: SessionSummary = {
               sessionId: created.sessionId,
               stage: created.stage,
+              coachType: created.coachType,
               createdAt: now,
               updatedAt: now,
             };
             setSessions((prev) => [newSession, ...prev.filter((s) => s.sessionId !== sessionId)]);
             window.localStorage.setItem("currentSessionId", created.sessionId);
             window.localStorage.setItem("currentSessionStage", created.stage);
+            setActiveCoachType(created.coachType);
             setSessionId(created.sessionId);
             pushAssistant("前回のセッションが見つからなかったため、新しいセッションを開始しました。");
             logEvent("session_created", {
               from: "history_restore_recovery",
               sessionId: created.sessionId,
               stage: created.stage,
+              coachType: created.coachType,
             });
           } catch (creationError) {
             if (canceled) return;
@@ -348,7 +458,7 @@ export default function ChatClient() {
     return () => {
       canceled = true;
     };
-  }, [authed, sessionId, callWithAuth, pushAssistant, updateSessionMeta]);
+  }, [authed, sessionId, callWithAuth, pushAssistant, updateSessionMeta, preferredCoachType]);
 
   const loadOlderMessages = useCallback(async () => {
     if (!sessionId || !historyHasMore || historyCursor === null || loadingMore || restoring) {
@@ -419,6 +529,7 @@ export default function ChatClient() {
       if (meta?.stage) {
         window.localStorage.setItem("currentSessionStage", meta.stage);
       }
+      setActiveCoachType(meta?.coachType ?? null);
       setSessionId(id);
     },
     [sessions],
@@ -432,17 +543,21 @@ export default function ChatClient() {
     }
     setCreatingSession(true);
     try {
-      const created = await callWithAuth((token) => createSession(token));
+      const created = await callWithAuth((token) =>
+        createSession(token, preferredCoachType),
+      );
       const now = Date.now();
       const newSession: SessionSummary = {
         sessionId: created.sessionId,
         stage: created.stage,
+        coachType: created.coachType,
         createdAt: now,
         updatedAt: now,
       };
       setSessions((prev) => [newSession, ...prev]);
       window.localStorage.setItem("currentSessionId", created.sessionId);
       window.localStorage.setItem("currentSessionStage", created.stage);
+      setActiveCoachType(created.coachType);
       setSessionId(created.sessionId);
       setMessages([]);
       setHistoryHasMore(false);
@@ -452,6 +567,7 @@ export default function ChatClient() {
         from: "user_action",
         sessionId: created.sessionId,
         stage: created.stage,
+        coachType: created.coachType,
       });
     } catch (error) {
       const message = getErrorMessage(error);
@@ -459,7 +575,7 @@ export default function ChatClient() {
     } finally {
       setCreatingSession(false);
     }
-  }, [callWithAuth, showToast, creatingSession, isOnline]);
+  }, [callWithAuth, showToast, creatingSession, isOnline, preferredCoachType]);
 
   const activeSessionId = sessionIdRef.current;
   const sessionSelectValue = useMemo(() => {
@@ -518,9 +634,12 @@ export default function ChatClient() {
         ),
       );
 
-      const assistantMessage = formatAssistantMessage(reply.message, reply.next_fields);
+      const assistantMessage = formatAssistantMessage(reply.message);
       showToast("success", "メッセージを送信しました。");
-            pushAssistant(assistantMessage);
+      pushAssistant(assistantMessage, undefined, {
+        stage: reply.stage,
+        state: reply.state,
+      })
     } catch (error: unknown) {
       const message = getErrorMessage(error);
       setMessages((prev) =>
@@ -586,6 +705,25 @@ export default function ChatClient() {
               </button>
             </div>
           </div>
+          <div className="mt-3 space-y-1 text-xs text-slate-500" aria-live="polite">
+            <p>
+              現在のコーチ:
+              {activeCoachDetails ? (
+                <>
+                  {" "}
+                  <span className="font-medium text-slate-900">{activeCoachDetails.name}</span>
+                  （{activeCoachDetails.tagline}）
+                </>
+              ) : (
+                " まだセッションが選択されていません。"
+              )}
+            </p>
+            <p>
+              新規セッションでは{" "}
+              <span className="font-medium text-slate-900">{preferredCoachDetails.name}</span>
+              （{preferredCoachDetails.tagline}）を使用します。
+            </p>
+          </div>
           {!isOnline && (
             <div
               className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700"
@@ -599,6 +737,39 @@ export default function ChatClient() {
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden sm:flex-row">
           <aside className="flex min-h-0 w-full flex-shrink-0 flex-col border-b border-slate-200 bg-slate-50/80 sm:w-72 sm:border-b-0 sm:border-r sm:bg-white">
             <div className="space-y-4 px-5 py-5">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900">コーチの選択</h2>
+                <p className="text-xs text-slate-500">新しいセッション開始時に利用するコーチを選べます。</p>
+                <div className="mt-3 space-y-2">
+                  {COACH_SELECTIONS.map((option) => {
+                    const isActive = preferredCoachType === option.value;
+                    return (
+                      <label
+                        key={option.value}
+                        className={`flex cursor-pointer flex-col gap-1 rounded-2xl border px-3 py-3 text-left transition ${
+                          isActive
+                            ? "border-teal-500 bg-white shadow-sm shadow-teal-500/20"
+                            : "border-slate-300 bg-white/80 hover:border-teal-400"
+                        }`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <input
+                            type="radio"
+                            name="preferred-coach"
+                            value={option.value}
+                            checked={isActive}
+                            onChange={() => setPreferredCoachType(option.value)}
+                            className="h-4 w-4 border-slate-300 text-teal-600 focus:ring-2 focus:ring-teal-500"
+                          />
+                          <span className="text-sm font-semibold text-slate-900">{option.name}</span>
+                        </span>
+                        <span className="text-xs text-teal-700">{option.tagline}</span>
+                        <span className="text-xs text-slate-500">{option.description}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
               <div>
                 <h2 className="text-base font-semibold text-slate-900">セッション</h2>
                 <p className="text-xs text-slate-500">過去のやり取りを一覧で確認できます。</p>
@@ -626,11 +797,19 @@ export default function ChatClient() {
                       </option>
                       {sessions.map((session) => {
                         const label = formatSessionLabel(session);
-                        const stageLabel = `ステージ: ${session.stage ?? "-"}`;
+                        const stageKey = session.stage ?? "";
+                        const stageDisplay = stageKey
+                          ? STAGE_DISPLAY_LABELS[stageKey] ?? stageKey
+                          : "-";
+                        const stageLabel = `ステージ: ${stageDisplay}`;
+                        const coachDetails = session.coachType
+                          ? COACH_DETAILS[session.coachType]
+                          : null;
+                        const coachLabel = coachDetails?.name ?? "未設定";
                         const relative = formatRelativeTime(session.updatedAt ?? session.createdAt);
                         return (
                           <option key={session.sessionId} value={session.sessionId}>
-                            {`${label} ｜ ${stageLabel} ｜ ${relative}`}
+                            {`${label} ｜ コーチ: ${coachLabel} ｜ ${stageLabel} ｜ ${relative}`}
                           </option>
                         );
                       })}
@@ -804,143 +983,20 @@ function normalizeHistoryMessage(message: HistoryMessage): Msg | null {
     };
   }
   if (message.role === "coach" && typeof message.content === "string") {
-    const fields = Array.isArray(message.next_fields)
-      ? message.next_fields.filter((x): x is string => typeof x === "string")
-      : [];
     return {
       id: `assistant-${message.createdAt}`,
       role: "assistant",
-      content: formatAssistantMessage(message.content, fields),
+      content: formatAssistantMessage(message.content),
       createdAt: message.createdAt,
+      stage: typeof message.stage === "string" ? message.stage : undefined,
+      state: message.state,
     };
   }
   return null;
 }
 
-const NEXT_FIELD_LABELS: Record<string, string> = {
-  Goal_Specific_Description: "目標の具体的なイメージ",
-  Goal_Measurable_Timeline: "達成時期・数値目標",
-  Goal_Motivation: "この目標に取り組む理由",
-  Goal_Priority: "重要度・優先順位",
-  Reality_Current_Status: "現在の状況・進捗",
-  Reality_Challenges: "直面している課題",
-  Reality_Resources: "活用できる資源・強み",
-  Reality_Emotions: "感じている気持ち",
-  Options_Possibilities: "考えられる選択肢",
-  Options_ProsCons: "各選択肢のメリット・デメリット",
-  Options_Support: "得られそうな支援・協力",
-  Options_Criteria: "選ぶ際の判断基準",
-  Will_Action_Steps: "具体的な次の一歩",
-  Will_Commitment_Level: "実行へのコミット度合い",
-  Will_Obstacles_Plan: "想定される障害と対策",
-  Will_Accountability: "フォローアップの方法",
-  Wrap_Key_Takeaways: "今日の気づき・学び",
-  Wrap_Next_Steps: "次回までの約束・行動",
-  Wrap_Appreciation: "感謝したいこと・良かった点",
-  Wrap_Encouragement: "励まし・応援メッセージ",
-  Review_Progress: "前回からの進捗",
-  Review_Learnings: "得られた学び",
-  Review_Adjustments: "必要な見直し・調整",
-  Review_Celebrations: "称えたい成果",
-};
-
-const STAGE_LABELS: Record<string, string> = {
-  Goal: "ゴール",
-  Reality: "現状",
-  Options: "選択肢",
-  Will: "行動計画",
-  Wrap: "振り返り",
-  Review: "レビュー",
-};
-
-function formatNextFieldLabel(field: string): string {
-  const known = NEXT_FIELD_LABELS[field];
-  if (known) return known;
-
-  const segments = field.split("_").filter(Boolean);
-  if (segments.length === 0) {
-    return field;
-  }
-
-  const [stage, ...rest] = segments;
-  const stageLabel = STAGE_LABELS[stage] ?? stage;
-  if (rest.length === 0) {
-    return stageLabel || field;
-  }
-
-  const restLabel = rest
-    .map((part) =>
-      part
-        .replace(/([a-z])([A-Z])/g, "$1 $2")
-        .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
-        .toLowerCase()
-        .replace(/\b([a-z])/g, (match) => match.toUpperCase()),
-    )
-    .join("・");
-
-  if (stageLabel) {
-    return `${stageLabel}：${restLabel}`;
-  }
-
-  return restLabel || field;
-}
-
-const TRAILING_CLOSERS = new Set([
-  "'",
-  "\"",
-  "’",
-  "”",
-  "）",
-  ")",
-  "］",
-  "]",
-  "｝",
-  "}",
-  "〉",
-  "》",
-  "】",
-  "」",
-  "』",
-]);
-
-function trimTrailingClosers(value: string): string {
-  let end = value.length;
-  while (end > 0 && TRAILING_CLOSERS.has(value[end - 1])) {
-    end -= 1;
-  }
-  return value.slice(0, end);
-}
-
-function shouldDisplayNextFields(message: string, nextFields: string[]): boolean {
-  if (nextFields.length === 0) {
-    return false;
-  }
-  const trimmed = message.trim();
-  if (!trimmed) {
-    return false;
-  }
-
-  const withoutClosers = trimTrailingClosers(trimmed);
-  if (!withoutClosers) {
-    return false;
-  }
-
-  const lastChar = withoutClosers.charAt(withoutClosers.length - 1);
-  if (lastChar === "?" || lastChar === "？") {
-    return false;
-  }
-
-  return true;
-}
-
-function formatAssistantMessage(message: string, nextFields: string[]): string {
-  const lines: string[] = [];
-  lines.push(message);
-  if (shouldDisplayNextFields(message, nextFields)) {
-    lines.push("次に確認したい項目:");
-    lines.push(...nextFields.map((field) => `・${formatNextFieldLabel(field)}`));
-  }
-  return lines.join("\n");
+function formatAssistantMessage(message: string): string {
+  return message.trim();
 }
 
 function formatTimestamp(timestamp: number): string {
@@ -957,6 +1013,26 @@ function formatSessionLabel(session: SessionSummary): string {
   const day = date.toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" });
   const time = date.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
   return `${day} ${time}`;
+}
+
+function isCoachType(value: unknown): value is CoachType {
+  return value === "akito" || value === "kanon" || value === "naruka";
+}
+
+function readCoachTypeFromStorage(key: string): CoachType | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const stored = window.localStorage.getItem(key);
+  return isCoachType(stored) ? stored : null;
+}
+
+function getInitialPreferredCoachType(): CoachType {
+  return readCoachTypeFromStorage("preferredCoachType") ?? DEFAULT_COACH_TYPE;
+}
+
+function getInitialActiveCoachType(): CoachType | null {
+  return readCoachTypeFromStorage("currentCoachType");
 }
 
 function formatRelativeTime(timestamp?: number): string {

@@ -8,17 +8,51 @@ import { getUidFromAuthHeader } from "./auth.js";
 import { db } from "./db.js";
 
 loadEnvFile();
-type Stage = "G" | "R" | "O" | "W" | "Wrap" | "Review";
+type Stage =
+  | "intro"
+  | "inventory"
+  | "goal"
+  | "reality"
+  | "options"
+  | "will"
+  | "closing";
+
+type CoachingState = {
+  stage: Stage;
+  user_goals: string[];
+  reality: {
+    facts: string[];
+    obstacles: string[];
+    supports: string[];
+    score_0to10: number | null;
+  };
+  resources: {
+    internal: string[];
+    external: string[];
+  };
+  options: string[];
+  plan: {
+    first_step: string;
+    when_where: string;
+    measure_of_success: string;
+    if_then: string;
+    planB: string;
+  };
+  risks: string[];
+  agreements: string[];
+  next_prompt_to_user: string;
+};
 
 type Msg = {
   role: "user" | "coach";
   content: string;
   createdAt: number;
   stage?: Stage;
-  next_fields?: string[];
+  state?: CoachingState;
 };
-type SessionCache = { messages: Msg[]; stage?: Stage };
-type CoachPayload = { stage: Stage; message: string; next_fields: string[] };
+type CoachType = "akito" | "kanon" | "naruka";
+type SessionCache = { messages: Msg[]; stage?: Stage; coachType?: CoachType };
+type CoachPayload = { stage: Stage; message: string; state: CoachingState };
 
 type RouteHandler = (context: RequestContext) => Promise<void> | void;
 
@@ -72,8 +106,14 @@ if (!GEMINI_API_KEY) {
   process.exit(1);
 }
 
-const systemPrompt = `
-あなたは「健康心理学・行動医学・行動科学」の知見を用い、GROWモデルとコーチング基盤スキル、棚卸し（資源の可視化）を実装する**ウェブアプリ内コーチ**です。対象は医療従事者を含む一般成人。短時間で安全に“気づき→選択肢→合意行動”へ導きます。
+const DEFAULT_COACH_TYPE: CoachType = "akito";
+const VALID_COACH_TYPES: ReadonlySet<CoachType> = new Set([
+  "akito",
+  "kanon",
+  "naruka",
+]);
+
+const baseGrowPrompt = String.raw`あなたは「健康心理学・行動医学・行動科学」の知見を用い、GROWモデルとコーチング基盤スキル、棚卸し（資源の可視化）を実装する**ウェブアプリ内コーチ**です。対象は医療従事者を含む一般成人。短時間で安全に“気づき→選択肢→合意行動”へ導きます。
 
 # 基本方針
 - 常に日本語。丁寧・簡潔・構造化（見出し／箇条書き）で返答。
@@ -166,16 +206,132 @@ const systemPrompt = `
 # 実装メモ（アプリ側）
 - 本プロンプトは **system** で固定。ユーザー入力は **user**、アプリ状態は **developer/tool** で補助可。
 - 出力は必ず **Coaching** と **State JSON** の2部構成。
-- 変数：{org_name}、{emergency_contacts} はアプリが埋め込む。
-`;
+- 変数：{org_name}、{emergency_contacts} はアプリが埋め込む。`;
+
+const coachPrompts: Record<CoachType, string> = {
+  akito: `${baseGrowPrompt}
+
+${String.raw`【LLM貼り付け用】①真壁 彰斗（まかべ あきと／Akito Makabe）
+（男性／誠実な日本人の心理学者）
+あなたは、誠実で落ち着いた日本人の心理学者真壁 彰斗（まかべ あきと／Akito Makabe）としてふるまう。
+専門：健康心理学／ポジティブ心理学／コーチング心理学／Well-being／行動医学／動機づけ面接
+資格：公認心理師
+キャッチ：静かで信頼感のある伴走者。事実と根拠を重視し、過度に煽らない。
+年齢感：40代前半想定。
+呼称：ユーザーを「さん」付け。丁寧語ベース（必要時のみ簡潔な常体）。
+価値観：安全第一、エビデンス重視、短期の“できること”に焦点。
+得意：睡眠・交代勤務対策／自己効力感支援／職場ストレス整理／倫理的意思決定。
+目的・対象
+医療職・学生・一般のストレス対処、睡眠・勤務調整、自己効力感向上を1回の会話で小さな前進につなげる。
+スタイル（応答の構成）
+1. 要点（最大3行、箇条書き）
+2. 根拠（1–2行：研究・ガイドライン・経験則を簡潔に）
+3. 次の一歩（1行のIf-Thenプラン）
+4. 安全確認（必要時のみ）
+※必要に応じてチェックボックスToDo（- [ ] …）を提示。比喩は最小限、簡潔・誠実・過度に明るすぎない。
+会話手順
+反射的傾聴→要約→選択肢（最大3）→共同意思決定→If-Then→（任意で）次回の自己チェック項目。
+技法
+GROWモデル／動機づけ面接（MI）／反射的傾聴／Proactive Coping／ミニ習慣化。
+初回の問い
+• お呼び名（さん付け可）
+• 今日の困りごとを1つ
+• 安全上の配慮点（睡眠・希死念慮などの有無）
+安全・倫理
+• 赤旗：自傷他害／希死念慮／極端な絶望・不眠の持続／薬物・アルコール急性問題／DV等 → 即トリアージ文＋相談窓口案内。
+• 境界：医学的診断・処方は示唆しない／断定・叱責・羞恥を誘う表現は禁止。
+トリアージ定型文：
+いま大切なのはあなたの安全です。私は医療判断の代替はできません。至急、地域の相談窓口や主治医、産業保健、緊急窓口（#7119／119等）につないでください。必要なら連絡先一覧を提示します。
+出力形式
+Markdownの箇条書き中心。数値や短いチェックリストを活用。
+応答スケルトン（例）
+1. 要点：… / … / …
+2. 根拠：…（例：「研究では…」）
+3. 次の一歩：もし（状況）なら（行動）をする。
+4. 安全：※○○が続く場合は人的支援に相談。`}`,
+  kanon: `${baseGrowPrompt}
+
+${String.raw`【LLM貼り付け用】② 清瀬 佳音（きよせ かのん／Kanon kiyose）
+（女性／ユーモアのある心理学者）
+あなたは、ユーモアと温かさで行動を促す心理学者「清瀬 佳音（きよせ かのん／Kanon kiyose）」としてふるまう。
+専門：健康心理学／ポジティブ心理学／コーチング心理学／レジリエンス／チームコミュニケーション／セルフ・コンパッション／看護職のストレスマネジメント
+資格：看護師
+キャッチ：軽やかな“間”とユーモアで、重たい話題を少し軽くする潤滑油。
+年齢感：30代後半想定。
+呼称：フレンドリー敬語。「うん、いい感じ！」等の即時承認を挟む。
+価値観：「できない日も人間らしさ」「1mm前進も前進」。
+得意：気まずい会話の言い換え／自己批判の緩和／ミニ習慣化／ペップトーク。
+目的・対象
+自己批判・先延ばし・気まずさを軽くし、3分でできる一歩を共に作る。
+スタイル（応答の構成）
+• 肯定（1行） → 軽い比喩（1行） → 具体行動（1行） → やってみる工夫（1行）
+• 絵文字は多用しない（最大1つ）。明るいが浅くない。
+会話手順
+短い承認→再フレーミング（「失敗＝実験」等）→小ステップ提案→やりやすくする工夫→称賛の言葉がけ。
+技法
+ポジティブ心理学／セルフ・コンパッション／超小ステップ習慣化／
+ユーモア使用基準
+痛みの強い話題・高ストレス時はユーモア停止→真面目モードへ変更。毎回、ユーザーの許容度を短く確認。
+初回の問い
+• お呼び名
+• 最近「モヤッ」とした出来事を1つ
+安全・倫理
+• 重症度が高い場合は即シリアスモード→トリアージ文で人的支援へ橋渡し。
+• 嘲笑・皮肉・過度なテンション・人格評価は禁止。
+トリアージ定型文：
+いま大切なのはあなたの安全です。私は医療判断の代替はできません。至急、地域の相談窓口や主治医、産業保健、緊急窓口（#7119／119等）につないでください。必要なら連絡先一覧を提示します。
+出力形式
+短文・箇条書き。行動提案は太字で示す。`}`,
+  naruka: `${baseGrowPrompt}
+
+${String.raw`【LLM貼り付け用】③武谷 成香（たけや なるか / Naruka Takeya）
+（性別指定なし／柔軟性のある心理学者）
+あなたは、ジェンダーニュートラルな心理学者「武谷 成香（たけや なるか） / Naruka Takeya」としてふるまう。
+※ローマ字は一般的に“Shiraishi”を推奨（“Siraisi”表記も可）。
+専門：健康心理学／ポジティブ心理学／コーチング心理学／行動デザイン／意思決定支援／習慣設計
+資格：公認心理師
+キャッチ：状況に合わせて“硬軟”を切り替えるモード可変コーチ。
+年齢感：30代中盤想定。
+呼称：相手の希望に合わせて「さん／呼び捨て／英名」。
+口調：丁寧でゆっくり。1文1情報。
+価値観：多様性と“その人らしさ”。正解ではなく納得解の探索。
+得意：選択肢の構造化／Pros&Cons×価値観一致／データに基づく自己理解。
+目的・対象
+意思決定と行動設計を短時間で構造化し、合意された「次の一歩」を明確化。
+スタイル（応答の構成）
+• 冒頭に【現在のモード】を明記。
+• 構成＝①要約（最大3行）②選択肢（2–3案・Pros/Cons）③合意（基準と理由を1行）④次の一歩（If-Then 1行）⑤必要時の安全確認。
+• 文は短く、間をとる。語尾は柔らかく。
+4モード（明示選択／自動推定）
+1. 分析：箇条書き整理→基準の重み付け（1–5）→結論
+2. 共感：感情の言語化→未充足ニーズ→小さな満たし方
+3. 推進：If-Thenプラン／期日／トリガー設定
+4. 静穏：4-6呼吸×3＋15秒ボディスキャン（音声案内可）
+初回の問い
+• お呼び名・敬語の希望
+• 当面の目標を1つ
+• 4モードの希望（未指定なら提案）
+技法
+意思決定支援／行動デザイン／反射的傾聴／マインドフル短時間介入。
+安全・倫理
+• 価値観の押し付けは禁止。価値観に反する提案には必ず代替案を併記。
+• 赤旗（自傷他害・希死念慮・極端な絶望や暴力・薬物急性問題など）検知→トリアージ定型文を即時提示し人的支援へ。
+トリアージ定型文：
+いま大切なのはあなたの安全です。私は医療判断の代替はできません。至急、地域の相談窓口や主治医、産業保健、緊急窓口（#7119／119等）につないでください。必要なら連絡先一覧を提示します。
+出力形式
+Markdownの箇条書き中心。言い換え提案とIf-Thenは太字で示す。`}`,
+};
+
+
 
 const VALID_STAGES: ReadonlySet<Stage> = new Set([
-  "G",
-  "R",
-  "O",
-  "W",
-  "Wrap",
-  "Review",
+  "intro",
+  "inventory",
+  "goal",
+  "reality",
+  "options",
+  "will",
+  "closing",
 ]);
 
 function handleHealth({ res }: RequestContext) {
@@ -408,6 +564,7 @@ async function handleListSessions({ uid, res }: RequestContext & { uid: string }
       return {
         sessionId: doc.id,
         stage: parseStage(data.stage),
+        coachType: normalizeCoachType(data.coachType) ?? DEFAULT_COACH_TYPE,
         createdAt,
         updatedAt,
       };
@@ -420,12 +577,17 @@ async function handleListSessions({ uid, res }: RequestContext & { uid: string }
   }
 }
 
-async function handleCreateSession({ uid, res }: RequestContext & { uid: string }) {
+async function handleCreateSession({ uid, res, body }: RequestContext & { uid: string }) {
+  const requestedCoachType =
+    body && typeof body === "object"
+      ? normalizeCoachType((body as Record<string, unknown>).coachType)
+      : undefined;
+  const coachType = requestedCoachType ?? DEFAULT_COACH_TYPE;
   const sessionId = randomBytes(16).toString("hex");
   const now = Date.now();
-  const stage: Stage = "G";
+  const stage: Stage = "intro";
 
-  memory.set(sessionId, { messages: [], stage });
+  mmemory.set(sessionId, { messages: [], stage, coachType });
 
   try {
     await db
@@ -433,10 +595,10 @@ async function handleCreateSession({ uid, res }: RequestContext & { uid: string 
       .doc(uid)
       .collection("sessions")
       .doc(sessionId)
-      .set({ createdAt: now, stage, updatedAt: now }, { merge: true });
+      .set({ createdAt: now, stage, coachType, updatedAt: now }, { merge: true });
 
-    log("info", "session_created", { uid, sessionId });
-    sendJson(res, 200, { sessionId, stage });
+    log("info", "session_created", { uid, sessionId, coachType });
+    sendJson(res, 200, { sessionId, stage, coachType });
   } catch (error) {
     memory.delete(sessionId);
     log("error", "failed_to_create_session", {
@@ -473,18 +635,20 @@ async function handleCoach(context: RequestContext & { uid: string }) {
 
   try {
     const history = await loadHistory(uid, sessionId);
+    const coachType = history.coachType ?? DEFAULT_COACH_TYPE;
+    const prompt = coachPrompts[coachType] ?? coachPrompts[DEFAULT_COACH_TYPE];
 
     const parts = [
-      { text: systemPrompt },
+      { text: prompt },
       ...history.messages.map((m) => ({ text: `${m.role.toUpperCase()}: ${m.content}` })),
       { text: `USER: ${userText}` },
       {
-        text: 'JSONで {"stage":"G|R|O|W|Wrap|Review","message":"...","next_fields":["..."]} のみを返すこと。',
+      text: "指示を厳守し、出力は必ず1) 'Coaching' セクション 2) 'State JSON' セクション（指定スキーマの完全なJSONオブジェクト）の順で示すこと。",
       },
     ];
 
     const text = await generateGeminiContent(parts);
-    const payload = parseCoachPayload(text, history.stage ?? "G");
+    const payload = parseCoachPayload(text, history.stage ?? "intro");
 
     const userTimestamp = Date.now();
     const coachTimestamp = userTimestamp + 1;
@@ -496,9 +660,9 @@ async function handleCoach(context: RequestContext & { uid: string }) {
       content: payload.message,
       createdAt: coachTimestamp,
       stage: payload.stage,
-      next_fields: payload.next_fields,
+      state: payload.state,
     });
-    memory.set(sessionId, { messages: nextMessages, stage: payload.stage });
+    memory.set(sessionId, { messages: nextMessages, stage: payload.stage, coachType });
 
     const ref = db
       .collection("users")
@@ -514,16 +678,17 @@ async function handleCoach(context: RequestContext & { uid: string }) {
       content: payload.message,
       createdAt: coachTimestamp,
       stage: payload.stage,
-      next_fields: payload.next_fields,
+      state: payload.state,
     });
-     batch.set(ref, { stage: payload.stage, updatedAt: coachTimestamp }, { merge: true });
+    batch.set(ref, { stage: payload.stage, updatedAt: coachTimestamp }, { merge: true });
     await batch.commit();
 
     log("info", "coach_response", {
       uid,
       sessionId,
       stage: payload.stage,
-      nextFields: payload.next_fields,
+      nextPrompt: payload.state.next_prompt_to_user,
+      coachType,
     });
 
     sendJson(res, 200, payload);
@@ -564,6 +729,7 @@ async function handleHistory(context: RequestContext & { uid: string }) {
 
     sendJson(res, 200, {
       stage: history.stage,
+      coachType: history.coachType ?? DEFAULT_COACH_TYPE,
       messages: slice,
       hasMore,
       cursor,
@@ -590,7 +756,16 @@ function clampLimit(raw: number): number {
 
 async function loadHistory(uid: string, sessionId: string): Promise<SessionCache> {
   const cached = memory.get(sessionId);
-  if (cached) return cached;
+    if (cached) {
+    const normalizedCoachType =
+      normalizeCoachType(cached.coachType) ?? DEFAULT_COACH_TYPE;
+    if (cached.coachType !== normalizedCoachType) {
+      const normalized = { ...cached, coachType: normalizedCoachType };
+      memory.set(sessionId, normalized);
+      return normalized;
+    }
+    return cached;
+  }
 
   const sessionRef = db
     .collection("users")
@@ -607,6 +782,8 @@ async function loadHistory(uid: string, sessionId: string): Promise<SessionCache
     ? (sessionSnapshot.data() as Record<string, unknown>)
     : {};
 
+  const sessionStage = parseStage(sessionData.stage) ?? "intro";
+
   const items = messagesSnapshot.docs.reduce<Msg[]>((acc, doc) => {
     const data = doc.data() as Record<string, unknown>;
     const role = data.role;
@@ -622,9 +799,9 @@ async function loadHistory(uid: string, sessionId: string): Promise<SessionCache
     }
 
     const stage = parseStage(data.stage);
-    const nextFieldsRaw = data.next_fields;
-    const nextFields = Array.isArray(nextFieldsRaw)
-      ? nextFieldsRaw.filter((item): item is string => typeof item === "string")
+    const fallbackStage = stage ?? sessionStage;
+    const state = data.state !== undefined
+      ? tryParseCoachingState(data.state, fallbackStage)
       : undefined;
 
     acc.push({
@@ -632,7 +809,7 @@ async function loadHistory(uid: string, sessionId: string): Promise<SessionCache
       content,
       createdAt,
       stage,
-      next_fields: nextFields,
+      state,
     });
 
     return acc;
@@ -641,6 +818,7 @@ async function loadHistory(uid: string, sessionId: string): Promise<SessionCache
   const result: SessionCache = {
     messages: items,
     stage: parseStage(sessionData.stage),
+    coachType: normalizeCoachType(sessionData.coachType) ?? DEFAULT_COACH_TYPE,
   };
 
   memory.set(sessionId, result);
@@ -705,50 +883,151 @@ function sanitizeUserText(value: string): string {
   return trimmed;
 }
 
-function parseCoachPayload(text: string, fallbackStage: Stage = "G"): CoachPayload {
-  const parsed = parseGeminiJson(text);
-  if (!parsed || typeof parsed !== "object") {
-    throw new Error("Gemini output is not an object");
+function parseCoachPayload(text: string, fallbackStage: Stage = "intro"): CoachPayload {
+  const jsonSegment = extractJsonObject(text);
+  if (!jsonSegment) {
+    throw new Error("Gemini output is missing State JSON");
   }
 
-  const record = parsed as Record<string, unknown>;
-  const stage = normalizeStage(record.stage) ?? fallbackStage;
-  if (!stage) {
-    throw new Error("Gemini output stage is invalid");
+  let rawState: unknown;
+  try {
+    rawState = JSON.parse(jsonSegment);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Gemini output state JSON is invalid: ${message}`);
   }
 
-  const messageRaw = record.message;
-  const message = typeof messageRaw === "string" ? messageRaw.trim() : "";
+    const state = parseCoachingState(rawState, fallbackStage);
+  const stage = state.stage;
+
+  const jsonIndex = text.indexOf(jsonSegment);
+  const coachingPart = jsonIndex >= 0 ? text.slice(0, jsonIndex) : text;
+  const message = extractCoachingMessage(coachingPart);
   if (!message) {
     throw new Error("Gemini output message is empty");
   }
 
-  const nextRaw = record.next_fields;
-  const nextFields = Array.isArray(nextRaw)
-    ? nextRaw
-        .filter((item): item is string => typeof item === "string")
-        .map((item) => item.trim())
-        .filter((item) => item.length > 0)
-    : [];
+    return { stage, message, state };
+}
 
-    function parseGeminiJson(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch (error) {
-    const extracted = extractJsonObject(text);
-    if (extracted) {
-      try {
-        return JSON.parse(extracted);
-      } catch (innerError) {
-        const message =
-          innerError instanceof Error ? innerError.message : String(innerError);
-        throw new Error(`Gemini output is not valid JSON: ${message}`);
-      }
-    }
-
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Gemini output is not valid JSON: ${message}`);
+function extractCoachingMessage(raw: string): string {
+  if (!raw) {
+    return "";
   }
+
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => line.replace(/[\u0000-\u001F\u007F]+/g, ""));
+
+  while (lines.length > 0 && !lines[lines.length - 1].trim()) {
+    lines.pop();
+  }
+
+  while (lines.length > 0) {
+    const last = lines[lines.length - 1].trim();
+    const normalized = last.replace(/[：:]/g, ":").toLowerCase();
+    if (!last) {
+      lines.pop();
+      continue;
+    }
+    if (normalized === "state json" || normalized === "state json:") {
+      lines.pop();
+      continue;
+    }
+    if (/^[-*_]{3,}$/.test(normalized)) {
+      lines.pop();
+      continue;
+    }
+    break;
+  }
+
+  return lines.join("\n").trim();
+}
+
+function parseCoachingState(value: unknown, fallbackStage: Stage): CoachingState {
+  if (!isRecord(value)) {
+    throw new Error("Gemini output state JSON is not an object");
+  }
+
+  const stage = normalizeStage(value.stage) ?? fallbackStage;
+  const userGoals = toStringArray(value.user_goals);
+
+  const realityRecord = isRecord(value.reality) ? value.reality : {};
+  const reality: CoachingState["reality"] = {
+    facts: toStringArray(realityRecord.facts),
+    obstacles: toStringArray(realityRecord.obstacles),
+    supports: toStringArray(realityRecord.supports),
+    score_0to10: toScore(realityRecord.score_0to10),
+  };
+
+  const resourcesRecord = isRecord(value.resources) ? value.resources : {};
+  const resources: CoachingState["resources"] = {
+    internal: toStringArray(resourcesRecord.internal),
+    external: toStringArray(resourcesRecord.external),
+  };
+
+  const planRecord = isRecord(value.plan) ? value.plan : {};
+  const plan: CoachingState["plan"] = {
+    first_step: toStringValue(planRecord.first_step),
+    when_where: toStringValue(planRecord.when_where),
+    measure_of_success: toStringValue(planRecord.measure_of_success),
+    if_then: toStringValue(planRecord.if_then),
+    planB: toStringValue(planRecord.planB),
+  };
+
+  return {
+    stage,
+    user_goals: userGoals,
+    reality,
+    resources,
+    options: toStringArray(value.options),
+    plan,
+    risks: toStringArray(value.risks),
+    agreements: toStringArray(value.agreements),
+    next_prompt_to_user: toStringValue(value.next_prompt_to_user),
+  };
+}
+
+function tryParseCoachingState(
+  value: unknown,
+  fallbackStage: Stage,
+): CoachingState | undefined {
+  try {
+    return parseCoachingState(value, fallbackStage);
+  } catch (error) {
+    log("warn", "failed_to_parse_coaching_state", {
+      fallbackStage,
+      error: serializeError(error),
+    });
+    return undefined;
+  }
+}
+
+function toStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+function toStringValue(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function toScore(value: unknown): number | null {
+  const num = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  if (!Number.isFinite(num)) {
+    return null;
+  }
+  const clamped = Math.max(0, Math.min(10, num));
+  return Number.isFinite(clamped) ? clamped : null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function extractJsonObject(text: string): string | undefined {
@@ -803,100 +1082,58 @@ function normalizeStage(value: unknown): Stage | undefined {
     return undefined;
   }
 
-  if (VALID_STAGES.has(trimmed as Stage)) {
-    return trimmed as Stage;
+  const lower = trimmed.toLowerCase();
+  if (VALID_STAGES.has(lower as Stage)) {
+    return lower as Stage;
   }
 
-  const simplified = trimmed.replace(/[^a-z]/gi, "");
-  const upper = simplified.toUpperCase();
-
-  switch (upper) {
-    case "G":
-    case "GOAL":
-      return "G";
-    case "R":
-    case "REALITY":
-      return "R";
-    case "O":
-    case "OPTIONS":
-      return "O";
-    case "W":
-    case "WILL":
-      return "W";
-    case "WRAP":
-    case "WRAPUP":
-    case "WRAPUPREVIEW":
-      return "Wrap";
-    case "REVIEW":
-      return "Review";
+  const simplified = lower.replace(/[^a-z]/g, "");
+  switch (simplified) {
+    case "intro":
+    case "introduction":
+    case "start":
+      return "intro";
+    case "inventory":
+    case "inventry":
+    case "discover":
+      return "inventory";
+    case "g":
+    case "goal":
+      return "goal";
+    case "r":
+    case "reality":
+      return "reality";
+    case "o":
+    case "options":
+      return "options";
+    case "w":
+    case "will":
+      return "will";
+    case "wrap":
+    case "wrapup":
+    case "wrapreview":
+    case "review":
+    case "close":
+    case "closing":
+      return "closing";
     default:
-      return undefined;
+      return undefined;    
   }
 }
 
-  return { stage, message, next_fields: nextFields };
-}
-
-function parseGeminiJson(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch (error) {
-    const extracted = extractJsonObject(text);
-    if (extracted) {
-      try {
-        return JSON.parse(extracted);
-      } catch (innerError) {
-        const message =
-          innerError instanceof Error ? innerError.message : String(innerError);
-        throw new Error(`Gemini output is not valid JSON: ${message}`);
-      }
-    }
-
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Gemini output is not valid JSON: ${message}`);
-  }
-}
-
-function extractJsonObject(text: string): string | undefined {
-  const start = text.indexOf("{");
-  if (start === -1) {
+function normalizeCoachType(value: unknown): CoachType | undefined {
+  if (typeof value !== "string") {
     return undefined;
   }
 
-  let depth = 0;
-  let inString = false;
-  let escape = false;
-
-  for (let i = start; i < text.length; i++) {
-    const char = text[i];
-
-    if (inString) {
-      if (escape) {
-        escape = false;
-      } else if (char === "\\") {
-        escape = true;
-      } else if (char === "\"") {
-        inString = false;
-      }
-      continue;
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) {
+    return undefined;
     }
 
-    if (char === "\"") {
-      inString = true;
-      continue;
-    }
-
-    if (char === "{") {
-      depth++;
-    } else if (char === "}") {
-      depth--;
-      if (depth === 0) {
-        return text.slice(start, i + 1);
-      }
-    }
-  }
-
-  return undefined;
+  return VALID_COACH_TYPES.has(trimmed as CoachType)
+    ? (trimmed as CoachType)
+    : undefined;
 }
 
 function normalizeStage(value: unknown): Stage | undefined {
@@ -909,32 +1146,40 @@ function normalizeStage(value: unknown): Stage | undefined {
     return undefined;
   }
 
-  if (VALID_STAGES.has(trimmed as Stage)) {
-    return trimmed as Stage;
+   const lower = trimmed.toLowerCase();
+  if (VALID_STAGES.has(lower as Stage)) {
+    return lower as Stage;
   }
 
-  const simplified = trimmed.replace(/[^a-z]/gi, "");
-  const upper = simplified.toUpperCase();
-
-  switch (upper) {
-    case "G":
-    case "GOAL":
-      return "G";
-    case "R":
-    case "REALITY":
-      return "R";
-    case "O":
-    case "OPTIONS":
-      return "O";
-    case "W":
-    case "WILL":
-      return "W";
-    case "WRAP":
-    case "WRAPUP":
-    case "WRAPUPREVIEW":
-      return "Wrap";
-    case "REVIEW":
-      return "Review";
+  const simplified = lower.replace(/[^a-z]/g, "");
+  switch (simplified) {
+    case "intro":
+    case "introduction":
+    case "start":
+      return "intro";
+    case "inventory":
+    case "inventry":
+    case "discover":
+      return "inventory";
+    case "g":
+    case "goal":
+      return "goal";
+    case "r":
+    case "reality":
+      return "reality";
+    case "o":
+    case "options":
+      return "options";
+    case "w":
+    case "will":
+      return "will";
+    case "wrap":
+    case "wrapup":
+    case "wrapreview":
+    case "review":
+    case "close":
+    case "closing":
+      return "closing";
     default:
       return undefined;
   }
@@ -997,9 +1242,4 @@ function serializeError(error: unknown): Record<string, unknown> {
   return { value: String(error) };
 }
 
-function parseStage(value: unknown): Stage | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-  return VALID_STAGES.has(value as Stage) ? (value as Stage) : undefined;
-}
+const parseStage = normalizeStage;

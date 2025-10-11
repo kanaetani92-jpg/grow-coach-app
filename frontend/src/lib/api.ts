@@ -7,17 +7,55 @@ export class ApiError extends Error {
   }
 }
 
+export type CoachingStage =
+  | "intro"
+  | "inventory"
+  | "goal"
+  | "reality"
+  | "options"
+  | "will"
+  | "closing";
+
+export type CoachingState = {
+  stage: CoachingStage;
+  user_goals: string[];
+  reality: {
+    facts: string[];
+    obstacles: string[];
+    supports: string[];
+    score_0to10: number | null;
+  };
+  resources: {
+    internal: string[];
+    external: string[];
+  };
+  options: string[];
+  plan: {
+    first_step: string;
+    when_where: string;
+    measure_of_success: string;
+    if_then: string;
+    planB: string;
+  };
+  risks: string[];
+  agreements: string[];
+  next_prompt_to_user: string;
+};
+
 export type HistoryMessage = {
   role: string;
   content: string;
   createdAt: number;
   stage?: string;
-  next_fields?: string[];
+  state?: CoachingState;
 };
+
+export type CoachType = "akito" | "kanon" | "naruka";
 
 export type SessionSummary = {
   sessionId: string;
   stage?: string;
+  coachType?: CoachType;
   createdAt?: number;
   updatedAt?: number;
 };
@@ -75,12 +113,13 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export async function createSession(
-  idToken: string
-): Promise<{ sessionId: string; stage: string }> {
+  idToken: string,
+  coachType: CoachType,
+): Promise<{ sessionId: string; stage: string; coachType: CoachType }> {
   return apiFetch("/sessions", {
     method: "POST",
     headers: { Authorization: `Bearer ${idToken}` },
-    body: JSON.stringify({}),
+    body: JSON.stringify({ coachType }),
   });
 }
 
@@ -96,7 +135,7 @@ export async function listSessions(
 export async function callCoach(
   payload: { sessionId: string; userText: string },
   idToken: string
-): Promise<{ stage: string; message: string; next_fields: string[] }> {
+): Promise<{ stage: string; message: string; state: CoachingState }> {
   return apiFetch("/coach", {
     method: "POST",
     headers: { Authorization: `Bearer ${idToken}` },
@@ -108,7 +147,13 @@ export async function fetchHistory(
   sessionId: string,
   idToken: string,
   options: { before?: number; limit?: number } = {},
-): Promise<{ stage?: string; messages: HistoryMessage[]; hasMore: boolean; cursor?: number }> {
+): Promise<{
+  stage?: string;
+  coachType?: CoachType;
+  messages: HistoryMessage[];
+  hasMore: boolean;
+  cursor?: number;
+}> {
   const params = new URLSearchParams({ sessionId });
   if (typeof options.before === "number") {
     params.set("before", String(options.before));
