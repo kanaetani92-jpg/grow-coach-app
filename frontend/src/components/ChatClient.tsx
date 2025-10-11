@@ -123,6 +123,16 @@ export default function ChatClient() {
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const shouldAutoScrollRef = useRef(true);
+    const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const adjustTextareaHeight = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    const maxHeight = 320;
+    const newHeight = Math.min(textarea.scrollHeight, maxHeight);
+    textarea.style.height = `${newHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
+  }, []);
   const scrollToBottom = useCallback(() => {
     const scroller = scrollerRef.current;
     if (!scroller) return;
@@ -154,6 +164,19 @@ export default function ChatClient() {
       }
     };
   }, []);
+
+    useEffect(() => {
+    adjustTextareaHeight();
+  }, [input, adjustTextareaHeight]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    adjustTextareaHeight();
+    window.addEventListener("resize", adjustTextareaHeight);
+    return () => {
+      window.removeEventListener("resize", adjustTextareaHeight);
+    };
+  }, [adjustTextareaHeight]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -957,7 +980,7 @@ export default function ChatClient() {
                           onSend();
                         }
                       }}
-                      className="h-24 w-full resize-none bg-transparent text-[15px] text-slate-900 placeholder:text-slate-400 focus:outline-none"
+                      className="min-h-[120px] max-h-[320px] w-full resize-none bg-transparent text-[15px] text-slate-900 placeholder:text-slate-400 focus:outline-none"
                       placeholder="メッセージを入力"
                       disabled={loading || restoring}
                       aria-label="メッセージを入力"
