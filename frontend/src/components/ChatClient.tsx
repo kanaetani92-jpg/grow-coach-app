@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { auth } from "@/lib/firebase";
 import { onAuthStateChanged, signOut } from "firebase/auth";
+import { getErrorMessage } from "@/lib/errors";
+import { logEvent } from "@/lib/logger";
 import {
   ApiError,
   callCoach,
@@ -58,11 +60,18 @@ const STAGE_DISPLAY_LABELS: Record<string, string> = {
   will: "行動計画",
   closing: "クロージング",
 };
-import { getErrorMessage } from "@/lib/errors";
-import { logEvent } from "@/lib/logger";
 
 const HISTORY_PAGE_SIZE = 25;
 const MAX_MESSAGE_LENGTH = 5000;
+
+type SessionMeta = {
+  sessionId: string;
+  stage?: string;
+  coachType: CoachType;
+  createdAt?: number;
+  updatedAt?: number;
+};
+
 type Msg = {
   id: string;
   role: "user" | "assistant";
@@ -78,7 +87,7 @@ type ToastState = { type: "success" | "error"; message: string } | null;
 export default function ChatClient() {
   const [authed, setAuthed] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [sessionError, setSessionError] = useState<string | null>(null);
   const [messages, setMessages] = useState<Msg[]>([]);
@@ -94,7 +103,7 @@ export default function ChatClient() {
   const [isOnline, setIsOnline] = useState<boolean>(() =>
     typeof window === "undefined" ? true : window.navigator.onLine,
   );
-    const [preferredCoachType, setPreferredCoachType] = useState<CoachType>(() =>
+  const [preferredCoachType, setPreferredCoachType] = useState<CoachType>(() =>
     getInitialPreferredCoachType(),
   );
   const [activeCoachType, setActiveCoachType] = useState<CoachType | null>(() =>
@@ -108,7 +117,7 @@ export default function ChatClient() {
     () => COACH_DETAILS[preferredCoachType],
     [preferredCoachType],
   );
-    const coachDisplayName = useMemo(() => {
+  const coachDisplayName = useMemo(() => {
     if (activeCoachDetails?.name) {
       return activeCoachDetails.name;
     }
@@ -123,7 +132,7 @@ export default function ChatClient() {
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const shouldAutoScrollRef = useRef(true);
-    const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const adjustTextareaHeight = useCallback(() => {
     const textarea = textareaRef.current;
     if (!textarea) return;
@@ -241,7 +250,7 @@ export default function ChatClient() {
     }
   }, []);
 
-  const updateSessionMeta = useCallback((id: string, updates: Partial<SessionSummary>) => {
+  const updateSessionMeta = useCallback((id: string, updates: Partial<SessionMeta>) => {
     setSessions((prev) => {
       const coachUpdate =
         updates.coachType !== undefined
@@ -252,11 +261,11 @@ export default function ChatClient() {
       }
       const mapped = prev.map((session) => {
         if (session.sessionId !== id) return session;
-        const next: SessionSummary = { ...session, ...updates };
+        const next: SessionMeta = { ...session, ...updates };
         if (coachUpdate) {
           next.coachType = coachUpdate;
         } else if (!isCoachType(next.coachType)) {
-          const normalized = normalizeCoachTypeValue(next.coachType ?? null);
+          const normalized = normalizeCoachTypeValue(next.coachType);
           next.coachType = normalized;
           persistSessionCoachType(id, normalized);
         }
@@ -280,15 +289,8 @@ export default function ChatClient() {
         );
       }
       const { sessions: fetched } = await callWithAuth((token) => listSessions(token));
-      let workingSessions = [...fetched]
-        .map((session) => {
-          const storedCoach = readStoredSessionCoachType(session.sessionId);
-          const resolvedCoach = normalizeCoachTypeValue(
-            session.coachType ?? storedCoach ?? null,
-          );
-          persistSessionCoachType(session.sessionId, resolvedCoach);
-          return { ...session, coachType: resolvedCoach };
-        })
+      let workingSessions = fetched
+        .map((session) => normalizeSessionSummary(session))
         .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
 
       const storedId =
@@ -306,7 +308,7 @@ export default function ChatClient() {
         }
       }
 
-      let createdSession: SessionSummary | null = null;
+      let createdSession: SessionMeta | null = null;
       if (!nextId) {
         const created = await callWithAuth((token) =>
           createSession(token, preferredCoachType),
@@ -382,9 +384,11 @@ export default function ChatClient() {
         setHistoryCursor(null);
         setHistoryHasMore(false);
         setSessionError(null);
+        setActiveCoachType(null);
         tokenRef.current = null;
         window.localStorage.removeItem("currentSessionId");
         window.localStorage.removeItem("currentSessionStage");
+        window.localStorage.removeItem("currentCoachType");
         return;
       }
 
@@ -403,17 +407,35 @@ export default function ChatClient() {
   }, [sessionId]);
 
   useEffect(() => {
+    if (!sessionId) return;
+    const meta = sessions.find((session) => session.sessionId === sessionId);
+    if (!meta) return;
+    const normalizedCoach = normalizeCoachTypeValue(meta.coachType);
+    if (activeCoachType !== normalizedCoach) {
+      setActiveCoachType(normalizedCoach);
+    }
+  }, [sessionId, sessions, activeCoachType]);
+
+  useEffect(() => {
     if (!shouldAutoScrollRef.current) return;
     scrollToBottom();
   }, [messages, loading, scrollToBottom]);
 
-    const pushAssistant = useCallback(
-    (text: string, createdAt?: number, meta?: { stage?: string | null; state?: CoachingState | null }) => {
+  const pushAssistant = useCallback(
+    (
+      text: string,
+      createdAt?: number,
+      meta?: { stage?: string | null; state?: CoachingState | null },
+    ) => {
       shouldAutoScrollRef.current = true;
       setMessages((prev) => {
         const updated = [...prev];
         const lastIndex = updated.length - 1;
-        if (lastIndex >= 0 && updated[lastIndex]?.role === "user" && updated[lastIndex].status !== "error") {
+        if (
+          lastIndex >= 0 &&
+          updated[lastIndex]?.role === "user" &&
+          updated[lastIndex].status !== "error"
+        ) {
           updated[lastIndex] = { ...updated[lastIndex], status: "read" };
         }
         const timestamp = createdAt ?? Date.now();
@@ -426,14 +448,14 @@ export default function ChatClient() {
         if (meta?.stage) {
           entry.stage = meta.stage;
         }
-          if (meta?.state) {
+        if (meta?.state) {
           entry.state = meta.state;
         }
         return [...updated, entry];
       });
     },
     [],
-  )      
+  );
 
   useEffect(() => {
     if (!authed || !sessionId) return;
@@ -480,14 +502,19 @@ export default function ChatClient() {
             if (canceled) return;
             const now = Date.now();
             const normalizedCoach = normalizeCoachTypeValue(created.coachType);
-            const newSession: SessionSummary = {
+            const newSession: SessionMeta = {
               sessionId: created.sessionId,
               stage: created.stage,
               coachType: normalizedCoach,
               createdAt: now,
               updatedAt: now,
             };
-            setSessions((prev) => [newSession, ...prev.filter((s) => s.sessionId !== sessionId)]);
+            setSessions((prev) => {
+              const filtered = prev.filter((s) => s.sessionId !== sessionId);
+              return [newSession, ...filtered].sort(
+                (a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0),
+              );
+            });
             window.localStorage.setItem("currentSessionId", created.sessionId);
             window.localStorage.setItem("currentSessionStage", created.stage);
             sessionIdRef.current = created.sessionId;
@@ -634,14 +661,19 @@ export default function ChatClient() {
       );
       const now = Date.now();
       const normalizedCoach = normalizeCoachTypeValue(created.coachType);
-      const newSession: SessionSummary = {
+      const newSession: SessionMeta = {
         sessionId: created.sessionId,
         stage: created.stage,
         coachType: normalizedCoach,
         createdAt: now,
         updatedAt: now,
       };
-      setSessions((prev) => [newSession, ...prev]);
+      setSessions((prev) => {
+        const filtered = prev.filter((session) => session.sessionId !== newSession.sessionId);
+        return [newSession, ...filtered].sort(
+          (a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0),
+        );
+      });
       window.localStorage.setItem("currentSessionId", created.sessionId);
       window.localStorage.setItem("currentSessionStage", created.stage);
       sessionIdRef.current = created.sessionId;
@@ -735,12 +767,12 @@ export default function ChatClient() {
       pushAssistant(assistantMessage, undefined, {
         stage: reply.stage,
         state: reply.state,
-      })
+      });
     } catch (error: unknown) {
       const message = getErrorMessage(error);
       setMessages((prev) =>
         prev.map((m) => (m.id === messageId ? { ...m, status: "error" } : m)),
-      )
+      );
       console.error("メッセージ送信に失敗しました", { error, message });
       pushAssistant("メッセージの処理に失敗しました。時間をおいて再試行してください。");
       showToast("error", "メッセージの送信に失敗しました。もう一度お試しください。");
@@ -1116,7 +1148,7 @@ function formatTimestamp(timestamp: number): string {
   return date.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
 }
 
-function formatSessionLabel(session: SessionSummary): string {
+function formatSessionLabel(session: SessionMeta): string {
   const timestamp = session.updatedAt ?? session.createdAt;
   if (!timestamp) {
     return "未記録のセッション";
@@ -1125,6 +1157,21 @@ function formatSessionLabel(session: SessionSummary): string {
   const day = date.toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" });
   const time = date.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
   return `${day} ${time}`;
+}
+
+function normalizeSessionSummary(session: SessionSummary): SessionMeta {
+  const storedCoach = readStoredSessionCoachType(session.sessionId);
+  const resolvedCoach = normalizeCoachTypeValue(
+    session.coachType ?? storedCoach ?? null,
+  );
+  persistSessionCoachType(session.sessionId, resolvedCoach);
+  return {
+    sessionId: session.sessionId,
+    stage: session.stage,
+    coachType: resolvedCoach,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+  };
 }
 
 function isCoachType(value: unknown): value is CoachType {
