@@ -58,6 +58,12 @@ const STAGE_DISPLAY_LABELS: Record<string, string> = {
   will: "行動計画",
   closing: "クロージング",
 };
+const TIME_HORIZON_LABELS: Record<"today" | "1w" | "3m" | "1y", string> = {
+  today: "今日",
+  "1w": "1週間",
+  "3m": "3か月",
+  "1y": "1年",
+};
 import { getErrorMessage } from "@/lib/errors";
 import { logEvent } from "@/lib/logger";
 
@@ -76,6 +82,26 @@ type Msg = {
 
 type ToastState = { type: "success" | "error"; message: string } | null;
 
+type EntryView = "select" | "resume" | "new" | "freeTalk" | "futureTalk" | "chat";
+
+type OptionsDraft = {
+  option1: string;
+  option2: string;
+  option3: string;
+  criteria: string;
+  pros1: string;
+  pros2: string;
+  pros3: string;
+  chosen: string;
+};
+
+type WillDraft = {
+  ifThen: string;
+  barrier: string;
+  antiBarrier: string;
+  startTime: string;
+};
+
 export default function ChatClient() {
   const [authed, setAuthed] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -92,6 +118,35 @@ export default function ChatClient() {
   const [userName, setUserName] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastState>(null);
   const [creatingSession, setCreatingSession] = useState(false);
+  const [entryView, setEntryView] = useState<EntryView>("select");
+  const [entryError, setEntryError] = useState<string | null>(null);
+  const [entryCoachSelection, setEntryCoachSelection] = useState<CoachType>(() =>
+    getInitialPreferredCoachType(),
+  );
+  const [resumeSelectValue, setResumeSelectValue] = useState<string>("");
+  const [freeTalkMood, setFreeTalkMood] = useState<string>("");
+  const [freeTalkNote, setFreeTalkNote] = useState<string>("");
+  const [freeTalkWantSmallTalk, setFreeTalkWantSmallTalk] = useState<"yes" | "no" | "">("");
+  const [futureGoalText, setFutureGoalText] = useState<string>("");
+  const [futureTimeHorizon, setFutureTimeHorizon] = useState<"today" | "1w" | "3m" | "1y">("today");
+  const [futureSuccessMetric, setFutureSuccessMetric] = useState<string>("");
+  const [futureImportance, setFutureImportance] = useState<number>(5);
+  const [optionsDraft, setOptionsDraft] = useState<OptionsDraft>({
+    option1: "",
+    option2: "",
+    option3: "",
+    criteria: "",
+    pros1: "",
+    pros2: "",
+    pros3: "",
+    chosen: "",
+  });
+  const [willDraft, setWillDraft] = useState<WillDraft>({
+    ifThen: "",
+    barrier: "",
+    antiBarrier: "",
+    startTime: "",
+  });
   const [isOnline, setIsOnline] = useState<boolean>(() =>
     typeof window === "undefined" ? true : window.navigator.onLine,
   );
@@ -362,6 +417,7 @@ export default function ChatClient() {
         setHistoryCursor(null);
         setHistoryHasMore(false);
         setSessionError(null);
+        setEntryView("select");
         tokenRef.current = null;
         window.localStorage.removeItem("currentSessionId");
         window.localStorage.removeItem("currentSessionStage");
@@ -369,6 +425,7 @@ export default function ChatClient() {
       }
 
       setAuthed(true);
+      setEntryView("select");
       setUserName(user.displayName || user.email || "サインイン済み");
       const idToken = await user.getIdToken();
       tokenRef.current = idToken;
@@ -437,7 +494,23 @@ export default function ChatClient() {
   }, [preferredCoachType]);
 
   useEffect(() => {
-    if (!authed || !sessionId) return;
+    if (entryView === "new") {
+      setEntryCoachSelection(preferredCoachType);
+    }
+  }, [entryView, preferredCoachType]);
+
+  useEffect(() => {
+    setEntryError(null);
+  }, [entryView]);
+
+  useEffect(() => {
+    setResumeSelectValue((prev) =>
+      prev && sessions.some((session) => session.sessionId === prev) ? prev : "",
+    );
+  }, [sessions]);
+
+  useEffect(() => {
+    if (!authed || !sessionId || entryView !== "chat") return;
 
     let canceled = false;
     shouldAutoScrollRef.current = true;
@@ -535,7 +608,7 @@ export default function ChatClient() {
     return () => {
       canceled = true;
     };
-  }, [authed, sessionId, callWithAuth, pushAssistant, updateSessionMeta]);
+  }, [authed, sessionId, callWithAuth, pushAssistant, updateSessionMeta, entryView]);
 
   const loadOlderMessages = useCallback(async () => {
     if (!sessionId || !historyHasMore || historyCursor === null || loadingMore || restoring) {
@@ -582,6 +655,7 @@ export default function ChatClient() {
   }, [sessionId, historyHasMore, historyCursor, loadingMore, restoring, callWithAuth, showToast]);
 
   useEffect(() => {
+    if (entryView !== "chat") return;
     const el = scrollerRef.current;
     if (!el) return;
 
@@ -595,12 +669,11 @@ export default function ChatClient() {
     return () => {
       el.removeEventListener("scroll", onScroll);
     };
-  }, [historyHasMore, loadingMore, restoring, loadOlderMessages]);
+  }, [entryView, historyHasMore, loadingMore, restoring, loadOlderMessages]);
 
   const handleSelectSession = useCallback(
     (id: string) => {
       if (!id) return;
-      if (id === sessionIdRef.current) return;
       window.localStorage.setItem("currentSessionId", id);
       const meta = sessions.find((s) => s.sessionId === id);
       if (meta?.stage) {
@@ -612,52 +685,206 @@ export default function ChatClient() {
         const storedCoach = readStoredSessionCoachType(id);
         setActiveCoachType(storedCoach);
       }
-      setSessionId(id);
+      if (id !== sessionIdRef.current) {
+        setSessionId(id);
+      }
     },
     [sessions],
   );
 
-  const handleCreateSession = useCallback(async () => {
-    if (creatingSession) return;
-    if (!isOnline) {
-      showToast("error", "オフラインのため新しいセッションを作成できません。接続を確認してください。");
+  const createSessionAndSelect = useCallback(
+    async (coachOverride?: CoachType) => {
+      if (creatingSession) return null;
+      if (!isOnline) {
+        showToast("error", "オフラインのため新しいセッションを作成できません。接続を確認してください。");
+        return null;
+      }
+      const selectedCoach = coachOverride ?? preferredCoachTypeRef.current ?? DEFAULT_COACH_TYPE;
+      preferredCoachTypeRef.current = selectedCoach;
+      setPreferredCoachType(selectedCoach);
+      setCreatingSession(true);
+      try {
+        const created = await callWithAuth((token) => createSession(token, selectedCoach));
+        const now = Date.now();
+        const newSession: SessionSummary = {
+          sessionId: created.sessionId,
+          stage: created.stage,
+          coachType: created.coachType,
+          createdAt: now,
+          updatedAt: now,
+        };
+        setSessions((prev) => [newSession, ...prev]);
+        window.localStorage.setItem("currentSessionId", created.sessionId);
+        window.localStorage.setItem("currentSessionStage", created.stage);
+        setActiveCoachType(created.coachType);
+        setSessionId(created.sessionId);
+        setMessages([]);
+        setHistoryHasMore(false);
+        setHistoryCursor(null);
+        shouldAutoScrollRef.current = true;
+        logEvent("session_created", {
+          from: "user_action",
+          sessionId: created.sessionId,
+          stage: created.stage,
+          coachType: created.coachType,
+        });
+        return newSession;
+      } catch (error) {
+        const message = getErrorMessage(error);
+        showToast("error", `新しいセッションの作成に失敗しました: ${message}`);
+        return null;
+      } finally {
+        setCreatingSession(false);
+      }
+    },
+    [callWithAuth, showToast, creatingSession, isOnline],
+  );
+
+  const enterChatWithSession = useCallback(
+    (id: string) => {
+      if (!id) {
+        setEntryError("セッションを選択してください。");
+        return;
+      }
+      setEntryError(null);
+      setResumeSelectValue(id);
+      handleSelectSession(id);
+      setEntryView("chat");
+    },
+    [handleSelectSession],
+  );
+
+  const handleResumeSelectChange = useCallback(
+    (value: string) => {
+      setResumeSelectValue(value);
+      if (value) {
+        enterChatWithSession(value);
+      }
+    },
+    [enterChatWithSession],
+  );
+
+  const handleFreeTalkSubmit = useCallback(async () => {
+    if (!freeTalkMood && freeTalkNote.trim().length === 0) {
+      setEntryError("気分スコアまたは自由記入欄のいずれかを入力してください。");
       return;
     }
-    setCreatingSession(true);
-    try {
-      const created = await callWithAuth((token) =>
-        createSession(token, preferredCoachTypeRef.current ?? DEFAULT_COACH_TYPE),
-      );
-      const now = Date.now();
-      const newSession: SessionSummary = {
-        sessionId: created.sessionId,
-        stage: created.stage,
-        coachType: created.coachType,
-        createdAt: now,
-        updatedAt: now,
-      };
-      setSessions((prev) => [newSession, ...prev]);
-      window.localStorage.setItem("currentSessionId", created.sessionId);
-      window.localStorage.setItem("currentSessionStage", created.stage);
-      setActiveCoachType(created.coachType);
-      setSessionId(created.sessionId);
-      setMessages([]);
-      setHistoryHasMore(false);
-      setHistoryCursor(null);
-      shouldAutoScrollRef.current = true;
-      logEvent("session_created", {
-        from: "user_action",
-        sessionId: created.sessionId,
-        stage: created.stage,
-        coachType: created.coachType,
-      });
-    } catch (error) {
-      const message = getErrorMessage(error);
-      showToast("error", `新しいセッションの作成に失敗しました: ${message}`);
-    } finally {
-      setCreatingSession(false);
+    const created = await createSessionAndSelect();
+    if (!created) return;
+
+    const lines: string[] = ["【チェックイン】"];
+    if (freeTalkMood) {
+      lines.push(`- 気分スコア: ${freeTalkMood}/10`);
     }
-  }, [callWithAuth, showToast, creatingSession, isOnline]);
+    if (freeTalkNote.trim()) {
+      lines.push(`- メモ: ${freeTalkNote.trim()}`);
+    }
+    if (freeTalkWantSmallTalk) {
+      lines.push(`- 雑談希望: ${freeTalkWantSmallTalk === "yes" ? "はい" : "いいえ"}`);
+    }
+    const summary = lines.join("\n");
+    setFreeTalkMood("");
+    setFreeTalkNote("");
+    setFreeTalkWantSmallTalk("");
+    setInput(summary);
+    showToast("success", "入力内容をチャット欄にセットしました。送信してセッションを始めましょう。");
+    setEntryError(null);
+    setEntryView("chat");
+  }, [
+    createSessionAndSelect,
+    freeTalkMood,
+    freeTalkNote,
+    freeTalkWantSmallTalk,
+    showToast,
+  ]);
+
+  const handleFutureTalkSubmit = useCallback(async () => {
+    if (!futureGoalText.trim() || !futureSuccessMetric.trim()) {
+      setEntryError("ゴールと成功の目安を入力してください。");
+      return;
+    }
+    const created = await createSessionAndSelect();
+    if (!created) return;
+
+    const lines: string[] = ["【ゴール設定】"];
+    lines.push(`- ゴール: ${futureGoalText.trim()}`);
+    lines.push(`- 期間: ${TIME_HORIZON_LABELS[futureTimeHorizon]}`);
+    lines.push(`- 成功の目安: ${futureSuccessMetric.trim()}`);
+    lines.push(`- 大事さ: ${futureImportance}/10`);
+
+    const optionLines: string[] = [];
+    const hasOptions = optionsDraft.option1 || optionsDraft.option2 || optionsDraft.option3;
+    if (hasOptions) {
+      optionLines.push("【選択肢づくり】");
+      if (optionsDraft.option1) {
+        optionLines.push(`- 案1: ${optionsDraft.option1}`);
+        if (optionsDraft.pros1.trim()) {
+          optionLines.push(`  ・短所と長所: ${optionsDraft.pros1.trim()}`);
+        }
+      }
+      if (optionsDraft.option2) {
+        optionLines.push(`- 案2: ${optionsDraft.option2}`);
+        if (optionsDraft.pros2.trim()) {
+          optionLines.push(`  ・短所と長所: ${optionsDraft.pros2.trim()}`);
+        }
+      }
+      if (optionsDraft.option3) {
+        optionLines.push(`- 案3: ${optionsDraft.option3}`);
+        if (optionsDraft.pros3.trim()) {
+          optionLines.push(`  ・短所と長所: ${optionsDraft.pros3.trim()}`);
+        }
+      }
+      if (optionsDraft.criteria.trim()) {
+        optionLines.push(`- 選ぶ基準: ${optionsDraft.criteria.trim()}`);
+      }
+      if (optionsDraft.chosen.trim()) {
+        optionLines.push(`- 今の第一候補: ${optionsDraft.chosen.trim()}`);
+      }
+    }
+
+    const willLines: string[] = [];
+    if (willDraft.ifThen.trim() || willDraft.barrier.trim() || willDraft.antiBarrier.trim() || willDraft.startTime.trim()) {
+      willLines.push("【一歩を決める】");
+      if (willDraft.ifThen.trim()) {
+        willLines.push(`- If-Then: ${willDraft.ifThen.trim()}`);
+      }
+      if (willDraft.barrier.trim()) {
+        willLines.push(`- 障壁になりそう: ${willDraft.barrier.trim()}`);
+      }
+      if (willDraft.antiBarrier.trim()) {
+        willLines.push(`- 先回り策: ${willDraft.antiBarrier.trim()}`);
+      }
+      if (willDraft.startTime.trim()) {
+        willLines.push(`- 開始タイミング: ${formatDateTimeLabel(willDraft.startTime.trim())}`);
+      }
+    }
+
+    const summary = [
+      ...lines,
+      ...optionLines,
+      ...willLines,
+    ].join("\n");
+
+    setFutureGoalText("");
+    setFutureSuccessMetric("");
+    setFutureTimeHorizon("today");
+    setFutureImportance(5);
+    setOptionsDraft({ option1: "", option2: "", option3: "", criteria: "", pros1: "", pros2: "", pros3: "", chosen: "" });
+    setWillDraft({ ifThen: "", barrier: "", antiBarrier: "", startTime: "" });
+    setInput(summary);
+    showToast("success", "入力内容をチャット欄にセットしました。送信してセッションを始めましょう。");
+    setEntryError(null);
+    setEntryView("chat");
+  }, [
+    createSessionAndSelect,
+    futureGoalText,
+    futureSuccessMetric,
+    futureTimeHorizon,
+    futureImportance,
+    optionsDraft,
+    willDraft,
+    showToast,
+  ]);
 
   const activeSessionId = sessionIdRef.current;
   const sessionSelectValue = useMemo(() => {
@@ -665,9 +892,12 @@ export default function ChatClient() {
     return sessions.some((session) => session.sessionId === activeSessionId) ? activeSessionId : "";
   }, [activeSessionId, sessions]);
   const quickActions = useMemo(
-    () => ["今日のテーマを選ぶ", "目標を設定", "最近の出来事を振り返る"],
+    () => ["過去のセッションから選ぶ", "新規セッション", "何でもトーク", "望む未来の実現に向けた対話"],
     [],
   );
+  const latestSessions = useMemo(() => sessions.slice(0, 3), [sessions]);
+  const remainingSessions = useMemo(() => sessions.slice(3), [sessions]);
+  const entryCoachDetails = useMemo(() => COACH_DETAILS[entryCoachSelection], [entryCoachSelection]);
   const remainingChars = useMemo(
     () => Math.max(0, MAX_MESSAGE_LENGTH - input.length),
     [input],
@@ -778,6 +1008,611 @@ export default function ChatClient() {
     );
   }
 
+  const entryHeader = (
+    <header className="border-b border-slate-200 px-6 py-5 sm:px-8">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <p className="text-2xl font-semibold text-slate-900">Grow Coach</p>
+          <p className="mt-1 text-sm text-slate-600">セッションの始め方を選んで対話をスタートしましょう。</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="hidden text-sm text-slate-500 sm:block" aria-live="polite">
+            {userName ?? "サインイン済み"}
+          </div>
+          <button
+            type="button"
+            onClick={() => signOut(auth)}
+            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2"
+            aria-label="ログアウト"
+          >
+            <span aria-hidden="true" className="text-lg leading-none">
+              ⎋
+            </span>
+            ログアウト
+          </button>
+        </div>
+      </div>
+    </header>
+  );
+
+  if (entryView !== "chat") {
+    let entryContent: JSX.Element | null = null;
+
+    if (entryView === "select") {
+      entryContent = (
+        <div className="flex flex-col gap-6">
+          <div>
+            <h2 className="text-xl font-semibold text-slate-900">どのモードで始めますか？</h2>
+            <p className="mt-1 text-sm text-slate-600">
+              「過去のセッション」「新規セッション」「何でもトーク」「望む未来の実現に向けた対話」の中から選択してください。
+            </p>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={() => setEntryView("resume")}
+              className="flex h-full flex-col justify-between rounded-3xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:border-teal-400 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500"
+            >
+              <div className="space-y-2">
+                <p className="text-base font-semibold text-slate-900">過去のセッションから選ぶ</p>
+                <p className="text-sm text-slate-600">最近のセッション3件と一覧から、続きを始めたい回を選択できます。</p>
+              </div>
+              <span className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-teal-600">
+                続きを見る
+                <span aria-hidden="true">→</span>
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setEntryView("new")}
+              className="flex h-full flex-col justify-between rounded-3xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:border-teal-400 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500"
+            >
+              <div className="space-y-2">
+                <p className="text-base font-semibold text-slate-900">新規セッション</p>
+                <p className="text-sm text-slate-600">コーチを選んで新しい対話を開始します。ウォームアップから本題まで伴走します。</p>
+              </div>
+              <span className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-teal-600">
+                コーチを選ぶ
+                <span aria-hidden="true">→</span>
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setEntryView("freeTalk")}
+              title="本題の前に、いまの気分や近況を30秒で共有します。話したくなければスキップ可。"
+              className="flex h-full flex-col justify-between rounded-3xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:border-teal-400 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500"
+            >
+              <div className="space-y-2">
+                <p className="text-base font-semibold text-slate-900">何でもトーク</p>
+                <p className="text-sm text-slate-600">気分スコアや近況を共有しながらチェックインできます。軽い雑談モードから始まります。</p>
+              </div>
+              <span className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-teal-600">
+                チェックインする
+                <span aria-hidden="true">→</span>
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setEntryView("futureTalk")}
+              title="実現したい“望む未来”を言語化します。期間と達成の目安を明確化します。"
+              className="flex h-full flex-col justify-between rounded-3xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:border-teal-400 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500"
+            >
+              <div className="space-y-2">
+                <p className="text-base font-semibold text-slate-900">望む未来の実現に向けた対話</p>
+                <p className="text-sm text-slate-600">ゴール設定（G）、選択肢検討（O）、行動決定（W）の3ステップで整理します。</p>
+              </div>
+              <span className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-teal-600">
+                プランを描く
+                <span aria-hidden="true">→</span>
+              </span>
+            </button>
+          </div>
+        </div>
+      );
+    } else if (entryView === "resume") {
+      entryContent = (
+        <div className="flex flex-col gap-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">過去のセッションを選択</h2>
+              <p className="mt-1 text-sm text-slate-600">最新3件はボタンから、その他はプルダウンで選べます。</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setEntryView("select")}
+              className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2"
+            >
+              <span aria-hidden="true">←</span>
+              選択画面に戻る
+            </button>
+          </div>
+          {sessionsLoading ? (
+            <p className="text-sm text-slate-500">セッションを読み込み中です...</p>
+          ) : sessionError ? (
+            <p className="text-sm text-rose-600">{sessionError}</p>
+          ) : sessions.length === 0 ? (
+            <p className="text-sm text-slate-600">まだセッションがありません。新規セッションから開始してください。</p>
+          ) : (
+            <>
+              <div className="space-y-3">
+                <p className="text-sm font-semibold text-slate-700">最新3件</p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {latestSessions.map((session) => {
+                    const label = formatSessionFullLabel(session);
+                    return (
+                      <button
+                        key={session.sessionId}
+                        type="button"
+                        onClick={() => enterChatWithSession(session.sessionId)}
+                        className="rounded-3xl border border-slate-200 bg-white px-4 py-4 text-left text-sm shadow-sm transition hover:border-teal-400 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500"
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              {remainingSessions.length > 0 ? (
+                <div className="space-y-2">
+                  <label htmlFor="resume-session-select" className="text-xs font-medium text-slate-500">
+                    一覧から選ぶ
+                  </label>
+                  <div className="rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus-within:border-teal-500 focus-within:ring-2 focus-within:ring-teal-100">
+                    <select
+                      id="resume-session-select"
+                      value={resumeSelectValue}
+                      onChange={(event) => handleResumeSelectChange(event.target.value)}
+                      className="w-full bg-transparent text-sm text-slate-900 focus:outline-none"
+                    >
+                      <option value="">セッションを選択</option>
+                      {sessions.map((session) => (
+                        <option key={session.sessionId} value={session.sessionId}>
+                          {formatSessionFullLabel(session)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              ) : null}
+            </>
+          )}
+          {entryError ? <p className="text-sm text-rose-600">{entryError}</p> : null}
+        </div>
+      );
+    } else if (entryView === "new") {
+      entryContent = (
+        <div className="flex flex-col gap-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">コーチを選択</h2>
+              <p className="mt-1 text-sm text-slate-600">セッションの雰囲気や進め方に合わせてコーチを選べます。</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setEntryView("select")}
+              className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2"
+            >
+              <span aria-hidden="true">←</span>
+              選択画面に戻る
+            </button>
+          </div>
+          <div className="grid gap-4 lg:grid-cols-3">
+            {COACH_SELECTIONS.map((option) => {
+              const isSelected = entryCoachSelection === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setEntryCoachSelection(option.value)}
+                  className={`flex h-full flex-col gap-2 rounded-3xl border px-5 py-5 text-left shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 ${
+                    isSelected
+                      ? "border-teal-500 bg-white shadow-teal-500/30"
+                      : "border-slate-200 bg-white hover:border-teal-400"
+                  }`}
+                >
+                  <p className="text-base font-semibold text-slate-900">{option.name}</p>
+                  <p className="text-sm text-teal-700">{option.tagline}</p>
+                  <p className="text-xs text-slate-600">{option.description}</p>
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <p className="text-sm text-slate-600">
+              選択中のコーチ:
+              <span className="ml-2 font-semibold text-slate-900">{entryCoachDetails.name}</span>
+              （{entryCoachDetails.tagline}）
+            </p>
+            <button
+              type="button"
+              onClick={async () => {
+                const created = await createSessionAndSelect(entryCoachSelection);
+                if (created) {
+                  setEntryView("chat");
+                }
+              }}
+              className="inline-flex items-center gap-2 rounded-full bg-teal-600 px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={creatingSession}
+            >
+              <span aria-hidden="true" className="text-lg leading-none">
+                ＋
+              </span>
+              コーチングを始める
+            </button>
+          </div>
+        </div>
+      );
+    } else if (entryView === "freeTalk") {
+      entryContent = (
+        <div className="flex flex-col gap-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">何でもトーク（チェックイン）</h2>
+              <p className="mt-1 text-sm text-slate-600">気分や近況を共有し、ウォームアップからセッションを始めます。</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setEntryView("select")}
+              className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2"
+            >
+              <span aria-hidden="true">←</span>
+              選択画面に戻る
+            </button>
+          </div>
+          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <form
+              className="space-y-5"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void handleFreeTalkSubmit();
+              }}
+            >
+              <div className="space-y-1">
+                <label htmlFor="free-talk-mood" className="text-sm font-semibold text-slate-700">
+                  気分スコア（0〜10）
+                </label>
+                <input
+                  id="free-talk-mood"
+                  type="number"
+                  min={0}
+                  max={10}
+                  value={freeTalkMood}
+                  onChange={(event) => setFreeTalkMood(event.target.value)}
+                  className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-100"
+                  placeholder="7 など"
+                />
+              </div>
+              <div className="space-y-1">
+                <label htmlFor="free-talk-note" className="text-sm font-semibold text-slate-700">
+                  近況メモ（任意）
+                </label>
+                <textarea
+                  id="free-talk-note"
+                  value={freeTalkNote}
+                  onChange={(event) => setFreeTalkNote(event.target.value)}
+                  className="min-h-[120px] w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-100"
+                  placeholder="今日の気分や最近の出来事を一言で"
+                />
+              </div>
+              <fieldset className="space-y-2">
+                <legend className="text-sm font-semibold text-slate-700">本題前の雑談をしたいですか？</legend>
+                <div className="flex flex-wrap gap-3">
+                  <label className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-3 py-1 text-sm text-slate-700 shadow-sm transition hover:border-teal-400">
+                    <input
+                      type="radio"
+                      name="free-talk-small-talk"
+                      value="yes"
+                      checked={freeTalkWantSmallTalk === "yes"}
+                      onChange={() => setFreeTalkWantSmallTalk("yes")}
+                    />
+                    したい
+                  </label>
+                  <label className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-3 py-1 text-sm text-slate-700 shadow-sm transition hover:border-teal-400">
+                    <input
+                      type="radio"
+                      name="free-talk-small-talk"
+                      value="no"
+                      checked={freeTalkWantSmallTalk === "no"}
+                      onChange={() => setFreeTalkWantSmallTalk("no")}
+                    />
+                    しなくてOK
+                  </label>
+                </div>
+              </fieldset>
+              <div className="rounded-2xl bg-slate-50 px-4 py-3 text-xs text-slate-600">
+                <p className="font-semibold text-slate-700">補助質問のヒント</p>
+                <ul className="mt-2 list-disc space-y-1 pl-5">
+                  <li>今日の気分を一言で言うと？（例：落ち着く／そわそわ／疲れ気味）</li>
+                  <li>最近“うまくいったこと”を1つ教えてください。</li>
+                  <li>今日は本題から入りますか？それとも軽く雑談しますか？</li>
+                </ul>
+              </div>
+              {entryError ? <p className="text-sm text-rose-600">{entryError}</p> : null}
+              <div className="flex flex-wrap items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setEntryView("select")}
+                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2"
+                >
+                  <span aria-hidden="true">←</span>
+                  選択画面に戻る
+                </button>
+                <button
+                  type="submit"
+                  className="inline-flex items-center gap-2 rounded-full bg-teal-600 px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2"
+                >
+                  入力をチャットに送る
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      );
+    } else if (entryView === "futureTalk") {
+      entryContent = (
+        <div className="flex flex-col gap-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">望む未来の実現に向けた対話</h2>
+              <p className="mt-1 text-sm text-slate-600">Goal・Options・Willの3ステップでゴールと行動を整理します。</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setEntryView("select")}
+              className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2"
+            >
+              <span aria-hidden="true">←</span>
+              選択画面に戻る
+            </button>
+          </div>
+          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <form
+              className="space-y-5"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void handleFutureTalkSubmit();
+              }}
+            >
+              <section className="space-y-4">
+                <div>
+                  <h3 className="text-base font-semibold text-slate-800">G：ゴールを描く</h3>
+                  <p className="mt-1 text-xs text-slate-500">望む未来を40字程度で書いてみましょう。</p>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-1">
+                    <label htmlFor="future-goal" className="text-sm font-semibold text-slate-700">
+                      ゴール（必須）
+                    </label>
+                    <textarea
+                      id="future-goal"
+                      value={futureGoalText}
+                      onChange={(event) => setFutureGoalText(event.target.value)}
+                      className="min-h-[100px] w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-100"
+                      placeholder="例：3か月後、週3回は定時で帰宅し自分の時間を確保できている"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-3">
+                    <div className="space-y-1">
+                      <label htmlFor="future-horizon" className="text-sm font-semibold text-slate-700">
+                        期間（必須）
+                      </label>
+                      <select
+                        id="future-horizon"
+                        value={futureTimeHorizon}
+                        onChange={(event) =>
+                          setFutureTimeHorizon(event.target.value as "today" | "1w" | "3m" | "1y")
+                        }
+                        className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-100"
+                      >
+                        <option value="today">今日</option>
+                        <option value="1w">1週間</option>
+                        <option value="3m">3か月</option>
+                        <option value="1y">1年</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <label htmlFor="future-metric" className="text-sm font-semibold text-slate-700">
+                        成功の目安（必須）
+                      </label>
+                      <input
+                        id="future-metric"
+                        value={futureSuccessMetric}
+                        onChange={(event) => setFutureSuccessMetric(event.target.value)}
+                        className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-100"
+                        placeholder="例：週3回／合計5時間など"
+                        required
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label htmlFor="future-importance" className="text-sm font-semibold text-slate-700">
+                        大事さ（0〜10）
+                      </label>
+                      <input
+                        id="future-importance"
+                        type="range"
+                        min={0}
+                        max={10}
+                        value={futureImportance}
+                        onChange={(event) => setFutureImportance(Number(event.target.value))}
+                        className="w-full"
+                      />
+                      <p className="text-xs text-slate-500">現在の値: {futureImportance}</p>
+                    </div>
+                  </div>
+                </div>
+                <div className="rounded-2xl bg-slate-50 px-4 py-3 text-xs text-slate-600">
+                  <p className="font-semibold text-slate-700">補助質問のヒント</p>
+                  <ul className="mt-2 list-disc space-y-1 pl-5">
+                    <li>3か月後、何ができていたら“前進”と言えますか。</li>
+                    <li>1週間の“できた／できない”は何で測りますか（回数・時間・行動有無など）。</li>
+                    <li>そのゴールが“あなたにとって大事な理由”は何ですか。</li>
+                  </ul>
+                </div>
+              </section>
+              <section className="space-y-4">
+                <div>
+                  <h3 className="text-base font-semibold text-slate-800">O：選択肢を出す（任意）</h3>
+                  <p className="mt-1 text-xs text-slate-500">2〜3個の選択肢と短所・長所、選ぶ基準をメモできます。</p>
+                </div>
+                <div className="grid gap-4 md:grid-cols-3">
+                  {(["option1", "option2", "option3"] as const).map((key, index) => {
+                    const optionKey = key as keyof OptionsDraft;
+                    const prosKey = (`pros${index + 1}`) as keyof OptionsDraft;
+                    return (
+                      <div key={key} className="space-y-1">
+                        <label className="text-sm font-semibold text-slate-700">
+                          案{index + 1}
+                        </label>
+                        <input
+                          value={optionsDraft[optionKey]}
+                          onChange={(event) =>
+                            setOptionsDraft((prev) => ({ ...prev, [optionKey]: event.target.value }))
+                          }
+                          className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-100"
+                          placeholder="案の概要"
+                        />
+                        <textarea
+                          value={optionsDraft[prosKey] ?? ""}
+                          onChange={(event) =>
+                            setOptionsDraft((prev) => ({ ...prev, [prosKey]: event.target.value }))
+                          }
+                          className="min-h-[80px] w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-100"
+                          placeholder="短所・長所をメモ"
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-1">
+                    <label htmlFor="option-criteria" className="text-sm font-semibold text-slate-700">
+                      選ぶ基準
+                    </label>
+                    <input
+                      id="option-criteria"
+                      value={optionsDraft.criteria}
+                      onChange={(event) =>
+                        setOptionsDraft((prev) => ({ ...prev, criteria: event.target.value }))
+                      }
+                      className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-100"
+                      placeholder="時間／効果／負担 など"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label htmlFor="option-chosen" className="text-sm font-semibold text-slate-700">
+                      今の第一候補
+                    </label>
+                    <input
+                      id="option-chosen"
+                      value={optionsDraft.chosen}
+                      onChange={(event) =>
+                        setOptionsDraft((prev) => ({ ...prev, chosen: event.target.value }))
+                      }
+                      className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-100"
+                      placeholder="最終的に選びたい案"
+                    />
+                  </div>
+                </div>
+              </section>
+              <section className="space-y-4">
+                <div>
+                  <h3 className="text-base font-semibold text-slate-800">W：一歩を決める（任意）</h3>
+                  <p className="mt-1 text-xs text-slate-500">If-Thenと障壁・先回り策、開始タイミングを決めます。</p>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-1">
+                    <label htmlFor="will-ifthen" className="text-sm font-semibold text-slate-700">
+                      If-Then
+                    </label>
+                    <textarea
+                      id="will-ifthen"
+                      value={willDraft.ifThen}
+                      onChange={(event) => setWillDraft((prev) => ({ ...prev, ifThen: event.target.value }))}
+                      className="min-h-[80px] w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-100"
+                      placeholder="もし（状況）なら（行動）する"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label htmlFor="will-barrier" className="text-sm font-semibold text-slate-700">
+                      障壁になりそうなこと
+                    </label>
+                    <textarea
+                      id="will-barrier"
+                      value={willDraft.barrier}
+                      onChange={(event) => setWillDraft((prev) => ({ ...prev, barrier: event.target.value }))}
+                      className="min-h-[80px] w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-100"
+                      placeholder="想定される課題"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label htmlFor="will-anti" className="text-sm font-semibold text-slate-700">
+                      先回り策
+                    </label>
+                    <textarea
+                      id="will-anti"
+                      value={willDraft.antiBarrier}
+                      onChange={(event) => setWillDraft((prev) => ({ ...prev, antiBarrier: event.target.value }))}
+                      className="min-h-[80px] w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-100"
+                      placeholder="障壁への備え"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label htmlFor="will-start" className="text-sm font-semibold text-slate-700">
+                      開始タイミング
+                    </label>
+                    <input
+                      id="will-start"
+                      type="datetime-local"
+                      value={willDraft.startTime}
+                      onChange={(event) => setWillDraft((prev) => ({ ...prev, startTime: event.target.value }))}
+                      className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-100"
+                    />
+                  </div>
+                </div>
+              </section>
+              {entryError ? <p className="text-sm text-rose-600">{entryError}</p> : null}
+              <div className="flex flex-wrap items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setEntryView("select")}
+                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2"
+                >
+                  <span aria-hidden="true">←</span>
+                  選択画面に戻る
+                </button>
+                <button
+                  type="submit"
+                  className="inline-flex items-center gap-2 rounded-full bg-teal-600 px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2"
+                >
+                  入力をチャットに送る
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <section className="relative flex min-h-[34rem] flex-col rounded-3xl border border-slate-200 bg-white text-base text-slate-900 shadow-sm lg:max-h-[calc(100vh-160px)] lg:overflow-hidden">
+        {entryHeader}
+        <div className="flex-1 overflow-y-auto px-6 py-6 sm:px-8">{entryContent}</div>
+        {toast && (
+          <div
+            role="status"
+            aria-live="polite"
+            className={`pointer-events-none absolute left-1/2 top-4 -translate-x-1/2 rounded-full px-4 py-2 text-sm shadow-lg ${
+              toast.type === "success" ? "bg-teal-600 text-white" : "bg-rose-600 text-white"
+            }`}
+          >
+            {toast.message}
+          </div>
+        )}
+      </section>
+    );
+  }
+
   return (
     <section className="relative flex min-h-[34rem] flex-col rounded-3xl border border-slate-200 bg-white text-base text-slate-900 shadow-sm lg:max-h-[calc(100vh-160px)] lg:overflow-hidden">
       <header className="border-b border-slate-200 px-6 py-5 sm:px-8">
@@ -789,7 +1624,9 @@ export default function ChatClient() {
             <div className="flex flex-wrap items-center gap-3">
               <button
                 type="button"
-                onClick={handleCreateSession}
+                onClick={() => {
+                  void createSessionAndSelect();
+                }}
                 className="inline-flex items-center gap-2 rounded-full bg-teal-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
                 aria-label="新規セッションを開始"
                 disabled={creatingSession}
@@ -911,24 +1748,11 @@ export default function ChatClient() {
                     <option value="" disabled>
                       セッションを選択
                     </option>
-                    {sessions.map((session) => {
-                      const label = formatSessionLabel(session);
-                      const stageKey = session.stage ?? "";
-                      const stageDisplay = stageKey
-                        ? STAGE_DISPLAY_LABELS[stageKey] ?? stageKey
-                        : "-";
-                      const stageLabel = `ステージ: ${stageDisplay}`;
-                      const coachDetails = session.coachType
-                        ? COACH_DETAILS[session.coachType]
-                        : null;
-                      const coachLabel = coachDetails?.name ?? "未設定";
-                      const relative = formatRelativeTime(session.updatedAt ?? session.createdAt);
-                      return (
-                        <option key={session.sessionId} value={session.sessionId}>
-                          {`${label} ｜ コーチ: ${coachLabel} ｜ ${stageLabel} ｜ ${relative}`}
-                        </option>
-                      );
-                    })}
+                    {sessions.map((session) => (
+                      <option key={session.sessionId} value={session.sessionId}>
+                        {formatSessionFullLabel(session)}
+                      </option>
+                    ))}
                   </select>
                 </div>
               </div>
@@ -1151,6 +1975,34 @@ function formatAssistantMessage(message: string): string {
 function formatTimestamp(timestamp: number): string {
   const date = new Date(timestamp);
   return date.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
+}
+
+function resolveCoachName(session: SessionSummary): string {
+  const storedCoach = session.coachType ?? readStoredSessionCoachType(session.sessionId);
+  if (storedCoach && COACH_DETAILS[storedCoach]) {
+    return COACH_DETAILS[storedCoach].name;
+  }
+  return "未設定";
+}
+
+function formatSessionFullLabel(session: SessionSummary): string {
+  const label = formatSessionLabel(session);
+  const coachLabel = resolveCoachName(session);
+  const stageKey = session.stage ?? "";
+  const stageDisplay = stageKey ? STAGE_DISPLAY_LABELS[stageKey] ?? stageKey : "-";
+  const stageLabel = `ステージ: ${stageDisplay}`;
+  const relative = formatRelativeTime(session.updatedAt ?? session.createdAt);
+  return `${label} ｜ コーチ: ${coachLabel} ｜ ${stageLabel} ｜ ${relative}`;
+}
+
+function formatDateTimeLabel(value: string): string {
+  if (!value) return "";
+  const withSeconds = value.length === 16 ? `${value}:00` : value;
+  const date = new Date(withSeconds);
+  if (Number.isNaN(date.getTime())) {
+    return value.replace("T", " ");
+  }
+  return date.toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
 function formatSessionLabel(session: SessionSummary): string {
