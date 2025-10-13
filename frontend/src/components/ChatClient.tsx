@@ -5,20 +5,15 @@ import { auth } from "@/lib/firebase";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import {
   ApiError,
-  addDialogueEntry,
   callCoach,
   createSession,
-  fetchFaceSheet,
   fetchHistory,
   listSessions,
   type HistoryMessage,
   type CoachType,
   type CoachingState,
-  type DialogueCategory,
-  type DialogueEntry,
   type SessionSummary,
 } from "@/lib/api";
-import FaceSheetPanel from "@/components/FaceSheetPanel";
 
 const DEFAULT_COACH_TYPE: CoachType = "akito";
 
@@ -81,22 +76,6 @@ type Msg = {
 
 type ToastState = { type: "success" | "error"; message: string } | null;
 
-type DialogueMap = Record<DialogueCategory, DialogueEntry[]>;
-
-function createEmptyDialogues(): DialogueMap {
-  return {
-    anythingTalk: [],
-    futureVision: [],
-  };
-}
-
-function createEmptyDialogueInputs(): Record<DialogueCategory, string> {
-  return {
-    anythingTalk: "",
-    futureVision: "",
-  };
-}
-
 export default function ChatClient() {
   const [authed, setAuthed] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -123,20 +102,6 @@ export default function ChatClient() {
   const [activeCoachType, setActiveCoachType] = useState<CoachType | null>(() =>
     getInitialActiveCoachType(),
   );
-  const [coachingState, setCoachingState] = useState<CoachingState | null>(null);
-  const [faceSheetStage, setFaceSheetStage] = useState<string | null>(null);
-  const [faceSheetLoading, setFaceSheetLoading] = useState(false);
-  const [faceSheetError, setFaceSheetError] = useState<string | null>(null);
-  const [dialogueError, setDialogueError] = useState<string | null>(null);
-  const [dialogues, setDialogues] = useState<DialogueMap>(() => createEmptyDialogues());
-  const [dialogueInputs, setDialogueInputs] = useState<Record<DialogueCategory, string>>(() =>
-    createEmptyDialogueInputs(),
-  );
-  const [dialogueSaving, setDialogueSaving] = useState<DialogueCategory | null>(null);
-  const [activeDialogueCategory, setActiveDialogueCategory] =
-    useState<DialogueCategory>("anythingTalk");
-  const [dialogueFocusCategory, setDialogueFocusCategory] = useState<DialogueCategory | null>(null);
-  const [dialogueFocusToken, setDialogueFocusToken] = useState(0);
   const activeCoachDetails = useMemo(
     () => (activeCoachType ? COACH_DETAILS[activeCoachType] : null),
     [activeCoachType],
@@ -155,20 +120,12 @@ export default function ChatClient() {
     () => coachDisplayName.replace(/\s+/g, "\n"),
     [coachDisplayName],
   );
-  const faceSheetStageDisplay = useMemo(() => {
-    if (!faceSheetStage) {
-      return "未設定";
-    }
-    const label = STAGE_DISPLAY_LABELS[faceSheetStage];
-    return label ?? faceSheetStage;
-  }, [faceSheetStage]);
-  const dialogueDisabled = !sessionId || !isOnline || restoring || faceSheetLoading;
   const tokenRef = useRef<string | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const shouldAutoScrollRef = useRef(true);
-    const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const adjustTextareaHeight = useCallback(() => {
     const textarea = textareaRef.current;
     if (!textarea) return;
@@ -405,14 +362,6 @@ export default function ChatClient() {
         setHistoryCursor(null);
         setHistoryHasMore(false);
         setSessionError(null);
-        setCoachingState(null);
-        setFaceSheetStage(null);
-        setFaceSheetError(null);
-        setDialogueError(null);
-        setDialogues(createEmptyDialogues());
-        setDialogueInputs(createEmptyDialogueInputs());
-        setFaceSheetLoading(false);
-        setDialogueSaving(null);
         tokenRef.current = null;
         window.localStorage.removeItem("currentSessionId");
         window.localStorage.removeItem("currentSessionStage");
@@ -479,12 +428,6 @@ export default function ChatClient() {
         }
         return [...updated, entry];
       });
-      if (meta?.stage) {
-        setFaceSheetStage(meta.stage);
-      }
-      if (meta?.state) {
-        setCoachingState(meta.state);
-      }
     },
     [activeCoachType],
   );
@@ -499,11 +442,11 @@ export default function ChatClient() {
     let canceled = false;
     shouldAutoScrollRef.current = true;
     setMessages([]);
-    setHistoryHasMore(false);
+    setRestoring(true);
     setHistoryCursor(null);
+    setHistoryHasMore(false);
 
     const restore = async () => {
-      setRestoring(true);
       try {
         const history = await callWithAuth((token) =>
           fetchHistory(sessionId, token, { limit: HISTORY_PAGE_SIZE }),
@@ -513,20 +456,7 @@ export default function ChatClient() {
         const restored = history.messages
           .map((m) => normalizeHistoryMessage(m, history.coachType))
           .filter((m): m is Msg => m !== null);
-
         setMessages(restored);
-        const latestStateMessage = restored
-          .filter((item) => item.role === "assistant" && item.state)
-          .sort((a, b) => a.createdAt - b.createdAt)
-          .pop();
-        setCoachingState(latestStateMessage?.state ?? null);
-        if (history.stage) {
-          setFaceSheetStage(history.stage);
-        } else if (latestStateMessage?.stage) {
-          setFaceSheetStage(latestStateMessage.stage);
-        } else {
-          setFaceSheetStage(null);
-        }
         setHistoryHasMore(Boolean(history.hasMore));
         setHistoryCursor(history.cursor ?? null);
 
@@ -535,6 +465,7 @@ export default function ChatClient() {
           updateSessionMeta(sessionId, { stage: history.stage });
         } else {
           window.localStorage.removeItem("currentSessionStage");
+          updateSessionMeta(sessionId, { stage: undefined });
         }
         updateSessionMeta(sessionId, { coachType: history.coachType });
         setActiveCoachType(history.coachType);
@@ -559,12 +490,6 @@ export default function ChatClient() {
             window.localStorage.setItem("currentSessionId", created.sessionId);
             window.localStorage.setItem("currentSessionStage", created.stage);
             setActiveCoachType(created.coachType);
-            setCoachingState(null);
-            setFaceSheetStage(created.stage);
-            setDialogues(createEmptyDialogues());
-            setDialogueInputs(createEmptyDialogueInputs());
-            setFaceSheetError(null);
-            setDialogueError(null);
             setSessionId(created.sessionId);
             pushAssistant("前回のセッションが見つからなかったため、新しいセッションを開始しました。");
             logEvent("session_created", {
@@ -580,12 +505,10 @@ export default function ChatClient() {
               {
                 id: `assistant-${Date.now()}`,
                 role: "assistant",
-                content: `前回のセッションが見つかりませんでした。新しいセッションの作成にも失敗しました: ${message}`,
+                content: `前回のセッションが見つからなかったため、新しいセッションの作成にも失敗しました: ${message}`,
                 createdAt: Date.now(),
               },
             ]);
-            setCoachingState(null);
-            setFaceSheetStage(null);
             logEvent("history_restore_failed", {
               sessionId,
               message: `recreate_failed:${message}`,
@@ -601,8 +524,6 @@ export default function ChatClient() {
               createdAt: Date.now(),
             },
           ]);
-          setCoachingState(null);
-          setFaceSheetStage(null);
           logEvent("history_restore_failed", { sessionId, message });
         }
       } finally {
@@ -615,60 +536,6 @@ export default function ChatClient() {
       canceled = true;
     };
   }, [authed, sessionId, callWithAuth, pushAssistant, updateSessionMeta]);
-
-  useEffect(() => {
-    if (!authed || !sessionId) {
-      setFaceSheetLoading(false);
-      setFaceSheetError(null);
-      setDialogueError(null);
-      setDialogues(createEmptyDialogues());
-      setDialogueInputs(createEmptyDialogueInputs());
-      if (!sessionId) {
-        setCoachingState(null);
-        setFaceSheetStage(null);
-      }
-      return;
-    }
-
-    let canceled = false;
-    setCoachingState(null);
-    setFaceSheetStage(null);
-    setFaceSheetLoading(true);
-    setFaceSheetError(null);
-    setDialogueError(null);
-    setDialogues(createEmptyDialogues());
-    setDialogueInputs(createEmptyDialogueInputs());
-
-    void callWithAuth((token) => fetchFaceSheet(sessionId, token))
-      .then((data) => {
-        if (canceled) return;
-        setDialogues({
-          anythingTalk: data.dialogues.anythingTalk ?? [],
-          futureVision: data.dialogues.futureVision ?? [],
-        });
-        if (data.faceSheet) {
-          setCoachingState(data.faceSheet);
-        }
-        if (data.stage) {
-          setFaceSheetStage(data.stage);
-        }
-      })
-      .catch((error) => {
-        if (canceled) return;
-        const message = getErrorMessage(error);
-        setFaceSheetError(message);
-        setDialogueError(message);
-      })
-      .finally(() => {
-        if (!canceled) {
-          setFaceSheetLoading(false);
-        }
-      });
-
-    return () => {
-      canceled = true;
-    };
-  }, [authed, sessionId, callWithAuth]);
 
   const loadOlderMessages = useCallback(async () => {
     if (!sessionId || !historyHasMore || historyCursor === null || loadingMore || restoring) {
@@ -713,70 +580,6 @@ export default function ChatClient() {
       setLoadingMore(false);
     }
   }, [sessionId, historyHasMore, historyCursor, loadingMore, restoring, callWithAuth, showToast]);
-
-  const handleDialogueInputChange = useCallback(
-    (category: DialogueCategory, value: string) => {
-      setDialogueInputs((prev) => ({ ...prev, [category]: value }));
-    },
-    [],
-  );
-
-  const handleDialogueShortcut = useCallback(
-    (category: DialogueCategory) => {
-      if (dialogueDisabled) return;
-      setActiveDialogueCategory(category);
-      setDialogueFocusCategory(category);
-      setDialogueFocusToken((token) => token + 1);
-    },
-    [dialogueDisabled],
-  );
-
-  const handleDialogueSave = useCallback(
-    async (category: DialogueCategory) => {
-      if (!sessionId) {
-        showToast("error", "セッションが選択されていません。");
-        return;
-      }
-      if (!isOnline) {
-        showToast("error", "オフラインのため保存できません。接続を確認してください。");
-        return;
-      }
-      if (restoring || faceSheetLoading) {
-        showToast("error", "読み込みが完了してから保存してください。");
-        return;
-      }
-
-      const content = dialogueInputs[category]?.trim();
-      if (!content) {
-        showToast("error", "入力内容を確認してください。");
-        return;
-      }
-
-      setDialogueSaving(category);
-      try {
-        const { entry } = await callWithAuth((token) =>
-          addDialogueEntry({ sessionId, category, content }, token),
-        );
-        setDialogues((prev) => {
-          const next: DialogueMap = {
-            ...prev,
-            [category]: [...prev[category], entry].sort((a, b) => a.createdAt - b.createdAt),
-          };
-          return next;
-        });
-        setDialogueInputs((prev) => ({ ...prev, [category]: "" }));
-        setDialogueError(null);
-        showToast("success", "対話を保存しました。");
-      } catch (error) {
-        const message = getErrorMessage(error);
-        setDialogueError(message);
-        showToast("error", message);
-      } finally {
-        setDialogueSaving(null);
-      }
-    },
-    [sessionId, isOnline, restoring, faceSheetLoading, dialogueInputs, callWithAuth, showToast],
-  );
 
   useEffect(() => {
     const el = scrollerRef.current;
@@ -1291,24 +1094,6 @@ export default function ChatClient() {
               </div>
             </form>
           </div>
-          <FaceSheetPanel
-            state={coachingState}
-            stageKey={faceSheetStage}
-            stageDisplay={faceSheetStageDisplay}
-            loading={faceSheetLoading}
-            error={faceSheetError}
-            dialogueError={dialogueError}
-            dialogues={dialogues}
-            inputs={dialogueInputs}
-            onInputChange={handleDialogueInputChange}
-            onSubmit={handleDialogueSave}
-            savingCategory={dialogueSaving}
-            disabled={dialogueDisabled}
-            onSectionSelect={handleDialogueShortcut}
-            activeCategory={activeDialogueCategory}
-            focusCategory={dialogueFocusCategory}
-            focusToken={dialogueFocusToken}
-          />
         </div>
       </div>
       {toast && (

@@ -1,5 +1,6 @@
 // サーバーコンポーネント（表示だけ）
 import ChatClient from "@/components/ChatClient";
+import FaceSheetAccess from "@/components/FaceSheetAccess";
 import SignInPanel from "@/components/SignInPanel";
 
 export default function Page() {
@@ -13,6 +14,7 @@ export default function Page() {
           <p className="text-sm text-slate-600 sm:text-base">
             Grow Coach と一緒にゴールを整理し、行動計画を立てましょう。
           </p>
+          <FaceSheetAccess />
         </header>
 
         <div className="grid gap-6 lg:grid-cols-[320px,1fr]">
