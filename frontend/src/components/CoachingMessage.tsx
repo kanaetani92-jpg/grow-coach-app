@@ -1,4 +1,4 @@
-import { memo, useMemo } from "react";
+import { memo, useMemo, type ReactElement, type ReactNode } from "react";
 
 type ListItem = {
   text: string;
@@ -89,12 +89,12 @@ function parseCoachingBlocks(content: string): Block[] {
   return blocks;
 }
 
-function renderInline(text: string) {
+function renderInline(text: string): ReactNode {
   if (!text) {
     return text;
   }
 
-  const elements: Array<string | JSX.Element> = [];
+  const elements: Array<string | ReactElement> = [];
   const strongPattern = /(\*\*|__)(.+?)\1/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
