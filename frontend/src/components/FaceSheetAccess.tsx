@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
-import { fetchFaceSheet } from "@/lib/api";
+import { ApiError, fetchFaceSheet } from "@/lib/api";
 import { getErrorMessage } from "@/lib/errors";
 import { auth } from "@/lib/firebase";
 import { onAuthStateChanged, type User } from "firebase/auth";
@@ -31,6 +31,11 @@ export default function FaceSheetAccess() {
         setStatus(response.faceSheet ? "exists" : "missing");
       } catch (loadError) {
         if (!active) return;
+        if (loadError instanceof ApiError && loadError.status === 404) {
+          setStatus("missing");
+          setError(null);
+          return;
+        }
         setError(getErrorMessage(loadError));
         setStatus("error");
       }

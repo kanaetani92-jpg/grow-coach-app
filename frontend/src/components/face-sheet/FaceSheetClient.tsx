@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import FaceSheetForm from "@/components/face-sheet/FaceSheetForm";
 import {
+  ApiError,
   type FaceSheet,
   fetchFaceSheet,
   saveFaceSheet,
@@ -135,8 +136,13 @@ export default function FaceSheetClient() {
       }
       setUpdatedAt(response.updatedAt ?? null);
     } catch (loadError) {
-      const message = getErrorMessage(loadError);
-      setError(message);
+      if (loadError instanceof ApiError && loadError.status === 404) {
+        setForm(createEmptyFaceSheet());
+        setUpdatedAt(null);
+      } else {
+        const message = getErrorMessage(loadError);
+        setError(message);
+      }
     } finally {
       setLoading(false);
     }
