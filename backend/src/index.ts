@@ -51,6 +51,7 @@ type Msg = {
   createdAt: number;
   stage?: Stage;
   state?: CoachingState;
+  coachType?: CoachType;
 };
 type SessionCache = { messages: Msg[]; stage?: Stage; coachType?: CoachType };
 type CoachPayload = { stage: Stage; message: string; state: CoachingState };
@@ -425,6 +426,9 @@ async function handleCoach(context: RequestContext & { uid: string }) {
   const sessionId = getStringField(body, "sessionId");
   const userTextField =
     getStringField(body, "userText") ?? getStringField(body, "message");
+  const requestedCoachType = normalizeCoachType(
+    (body as Record<string, unknown>).coachType,
+  );
 
   if (!sessionId || !userTextField) {
     sendJson(res, 400, { error: "invalid body" });
@@ -439,7 +443,7 @@ async function handleCoach(context: RequestContext & { uid: string }) {
 
   try {
     const history = await loadHistory(uid, sessionId);
-    const coachType = history.coachType ?? DEFAULT_COACH_TYPE;
+    const coachType = requestedCoachType ?? history.coachType ?? DEFAULT_COACH_TYPE;
     const prompt = coachPrompts[coachType] ?? coachPrompts[DEFAULT_COACH_TYPE];
 
     const parts = [
@@ -465,6 +469,7 @@ async function handleCoach(context: RequestContext & { uid: string }) {
       createdAt: coachTimestamp,
       stage: payload.stage,
       state: payload.state,
+      coachType,
     });
     memory.set(sessionId, { messages: nextMessages, stage: payload.stage, coachType });
 
@@ -483,6 +488,7 @@ async function handleCoach(context: RequestContext & { uid: string }) {
       createdAt: coachTimestamp,
       stage: payload.stage,
       state: payload.state,
+      coachType,
     });
     batch.set(
       ref,
@@ -759,6 +765,7 @@ async function loadHistory(uid: string, sessionId: string): Promise<SessionCache
     const state = data.state !== undefined
       ? tryParseCoachingState(data.state, fallbackStage)
       : undefined;
+    const coachType = normalizeCoachType(data.coachType);
 
     acc.push({
       role,
@@ -766,6 +773,7 @@ async function loadHistory(uid: string, sessionId: string): Promise<SessionCache
       createdAt,
       stage,
       state,
+      coachType,
     });
 
     return acc;
