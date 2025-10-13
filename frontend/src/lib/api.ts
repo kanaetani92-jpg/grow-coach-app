@@ -48,6 +48,7 @@ export type HistoryMessage = {
   createdAt: number;
   stage?: string;
   state?: CoachingState;
+  coachType?: CoachType;
 };
 
 export type CoachType = "akito" | "kanon" | "naruka";
@@ -149,7 +150,7 @@ export async function listSessions(
 }
 
 export async function callCoach(
-  payload: { sessionId: string; userText: string },
+  payload: { sessionId: string; userText: string; coachType?: CoachType },
   idToken: string
 ): Promise<{ stage: string; message: string; state: CoachingState; coachType: CoachType }> {
   return apiFetch("/coach", {

@@ -76,6 +76,7 @@ type Msg = {
   status?: "sending" | "sent" | "read" | "error";
   stage?: string;
   state?: CoachingState;
+  coachType?: CoachType;
 };
 
 type ToastState = { type: "success" | "error"; message: string } | null;
@@ -143,7 +144,7 @@ export default function ChatClient() {
     () => COACH_DETAILS[preferredCoachType],
     [preferredCoachType],
   );
-    const coachDisplayName = useMemo(() => {
+  const coachDisplayName = useMemo(() => {
     if (activeCoachDetails?.name) {
       return activeCoachDetails.name;
     }
@@ -436,17 +437,25 @@ export default function ChatClient() {
     scrollToBottom();
   }, [messages, loading, scrollToBottom]);
 
-    const pushAssistant = useCallback(
+  const pushAssistant = useCallback(
     (
       text: string,
       createdAt?: number,
-      meta?: { stage?: string | null; state?: CoachingState | null },
+      meta?: {
+        stage?: string | null;
+        state?: CoachingState | null;
+        coachType?: CoachType | null;
+      },
     ) => {
       shouldAutoScrollRef.current = true;
       setMessages((prev) => {
         const updated = [...prev];
         const lastIndex = updated.length - 1;
-        if (lastIndex >= 0 && updated[lastIndex]?.role === "user" && updated[lastIndex].status !== "error") {
+        if (
+          lastIndex >= 0 &&
+          updated[lastIndex]?.role === "user" &&
+          updated[lastIndex].status !== "error"
+        ) {
           updated[lastIndex] = { ...updated[lastIndex], status: "read" };
         }
         const timestamp = createdAt ?? Date.now();
@@ -459,8 +468,12 @@ export default function ChatClient() {
         if (meta?.stage) {
           entry.stage = meta.stage;
         }
-          if (meta?.state) {
+        if (meta?.state) {
           entry.state = meta.state;
+        }
+        const resolvedCoachType = meta?.coachType ?? activeCoachType ?? preferredCoachType;
+        if (resolvedCoachType) {
+          entry.coachType = resolvedCoachType;
         }
         return [...updated, entry];
       });
@@ -471,8 +484,8 @@ export default function ChatClient() {
         setCoachingState(meta.state);
       }
     },
-    [],
-  )
+    [activeCoachType, preferredCoachType],
+  );
 
   useEffect(() => {
     if (!authed || !sessionId) return;
@@ -492,7 +505,7 @@ export default function ChatClient() {
         if (canceled) return;
 
         const restored = history.messages
-          .map((m) => normalizeHistoryMessage(m))
+          .map((m) => normalizeHistoryMessage(m, history.coachType))
           .filter((m): m is Msg => m !== null);
 
         setMessages(restored);
@@ -668,7 +681,7 @@ export default function ChatClient() {
         fetchHistory(sessionId, token, { limit: HISTORY_PAGE_SIZE, before: historyCursor }),
       );
       const older = history.messages
-        .map((m) => normalizeHistoryMessage(m))
+        .map((m) => normalizeHistoryMessage(m, history.coachType))
         .filter((m): m is Msg => m !== null);
 
       if (older.length > 0) {
@@ -850,6 +863,17 @@ export default function ChatClient() {
     () => Math.max(0, MAX_MESSAGE_LENGTH - input.length),
     [input],
   );
+  const handlePreferredCoachChange = useCallback(
+    (nextCoach: CoachType) => {
+      setPreferredCoachType(nextCoach);
+      setActiveCoachType(nextCoach);
+      const activeSessionId = sessionIdRef.current;
+      if (activeSessionId) {
+        updateSessionMeta(activeSessionId, { coachType: nextCoach });
+      }
+    },
+    [updateSessionMeta],
+  );
 
   const onSend = useCallback(async () => {
     const msg = input.trim();
@@ -879,8 +903,9 @@ export default function ChatClient() {
       const activeSessionId = sessionIdRef.current;
       if (!activeSessionId) throw new Error("セッションが見つかりませんでした。");
 
+      const coachTypeForRequest = activeCoachType ?? preferredCoachType;
       const reply = await callWithAuth((token) =>
-        callCoach({ sessionId: activeSessionId, userText: msg }, token),
+        callCoach({ sessionId: activeSessionId, userText: msg, coachType: coachTypeForRequest }, token),
       );
 
       const now = Date.now();
@@ -905,7 +930,8 @@ export default function ChatClient() {
       pushAssistant(assistantMessage, undefined, {
         stage: reply.stage,
         state: reply.state,
-      })
+        coachType: reply.coachType,
+      });
     } catch (error: unknown) {
       const message = getErrorMessage(error);
       setMessages((prev) =>
@@ -917,7 +943,16 @@ export default function ChatClient() {
     } finally {
       setLoading(false);
     }
-  }, [callWithAuth, pushAssistant, restoring, showToast, updateSessionMeta, input]);
+  }, [
+    callWithAuth,
+    pushAssistant,
+    restoring,
+    showToast,
+    updateSessionMeta,
+    input,
+    activeCoachType,
+    preferredCoachType,
+  ]);
 
   if (!authed) {
     return (
@@ -1024,7 +1059,7 @@ export default function ChatClient() {
                           name="preferred-coach"
                           value={option.value}
                           checked={isActive}
-                          onChange={() => setPreferredCoachType(option.value)}
+                          onChange={() => handlePreferredCoachChange(option.value)}
                           className="h-4 w-4 border-slate-300 text-teal-600 focus:ring-2 focus:ring-teal-500"
                         />
                         <span className="text-sm font-semibold text-slate-900">{option.name}</span>
@@ -1126,52 +1161,65 @@ export default function ChatClient() {
                 </div>
               ) : (
                 <ul className="space-y-4" aria-live="polite">
-                  {messages.map((message) => (
-                    <li key={message.id} className="flex items-end gap-3">
-                      {message.role === "assistant" && (
+                  {messages.map((message) => {
+                    const messageCoachType =
+                      message.role === "assistant"
+                        ? message.coachType ?? activeCoachType ?? preferredCoachType
+                        : null;
+                    const messageCoachDetails = messageCoachType
+                      ? COACH_DETAILS[messageCoachType]
+                      : null;
+                    const assistantDisplayName =
+                      messageCoachDetails?.name ?? coachDisplayName;
+                    const assistantAvatarLabel = assistantDisplayName.replace(/\s+/g, "\n");
+
+                    return (
+                      <li key={message.id} className="flex items-end gap-3">
+                        {message.role === "assistant" && (
+                          <div
+                            className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-teal-600 text-white shadow-sm"
+                            aria-label={`${assistantDisplayName}のメッセージ`}
+                          >
+                            <span className="whitespace-pre-line text-[10px] font-semibold leading-tight text-center">
+                              {assistantAvatarLabel}
+                            </span>
+                          </div>
+                        )}
                         <div
-                          className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-teal-600 text-white shadow-sm"
-                          aria-label={`${coachDisplayName}のメッセージ`}
-                        >
-                          <span className="whitespace-pre-line text-[10px] font-semibold leading-tight text-center">
-                            {coachAvatarLabel}
-                          </span>
-                        </div>
-                      )}
-                      <div
-                        className={`max-w-[70%] rounded-3xl px-5 py-3 shadow-sm ${
-                          message.role === "user"
-                            ? "ml-auto bg-teal-600 text-white"
-                            : "border border-slate-200 bg-white text-slate-900"
-                        }`}
-                      >
-                        <p className="chat-text text-[15px] leading-relaxed">{message.content}</p>
-                        <div
-                          className={`mt-2 flex items-center gap-2 text-[11px] ${
+                          className={`max-w-[70%] rounded-3xl px-5 py-3 shadow-sm ${
                             message.role === "user"
-                              ? "justify-end text-white/80"
-                              : "justify-start text-slate-500"
+                              ? "ml-auto bg-teal-600 text-white"
+                              : "border border-slate-200 bg-white text-slate-900"
                           }`}
                         >
-                          <span>{formatTimestamp(message.createdAt)}</span>
-                          {message.role === "user" && (
-                            <span>
-                              {message.status === "error"
-                                ? "エラー"
-                                : message.status === "read" || message.status === "sent"
-                                  ? "送信済"
-                                  : "送信中"}
-                            </span>
-                          )}
+                          <p className="chat-text text-[15px] leading-relaxed">{message.content}</p>
+                          <div
+                            className={`mt-2 flex items-center gap-2 text-[11px] ${
+                              message.role === "user"
+                                ? "justify-end text-white/80"
+                                : "justify-start text-slate-500"
+                            }`}
+                          >
+                            <span>{formatTimestamp(message.createdAt)}</span>
+                            {message.role === "user" && (
+                              <span>
+                                {message.status === "error"
+                                  ? "エラー"
+                                  : message.status === "read" || message.status === "sent"
+                                    ? "送信済"
+                                    : "送信中"}
+                              </span>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                      {message.role === "user" && (
-                        <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white shadow-sm">
-                          {userInitial}
-                        </div>
-                      )}
-                    </li>
-                  ))}
+                        {message.role === "user" && (
+                          <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white shadow-sm">
+                            {userInitial}
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
                   {loading && (
                     <li className="flex items-center gap-3 text-slate-500">
                       <div
@@ -1274,7 +1322,10 @@ export default function ChatClient() {
   );
 }
 
-function normalizeHistoryMessage(message: HistoryMessage): Msg | null {
+function normalizeHistoryMessage(
+  message: HistoryMessage,
+  fallbackCoachType?: CoachType,
+): Msg | null {
   if (message.role === "user" && typeof message.content === "string") {
     return {
       id: `user-${message.createdAt}`,
@@ -1285,6 +1336,10 @@ function normalizeHistoryMessage(message: HistoryMessage): Msg | null {
     };
   }
   if (message.role === "coach" && typeof message.content === "string") {
+    const normalizedCoachType = isCoachType(message.coachType)
+      ? message.coachType
+      : undefined;
+    const resolvedCoachType = normalizedCoachType ?? fallbackCoachType;
     return {
       id: `assistant-${message.createdAt}`,
       role: "assistant",
@@ -1292,6 +1347,7 @@ function normalizeHistoryMessage(message: HistoryMessage): Msg | null {
       createdAt: message.createdAt,
       stage: typeof message.stage === "string" ? message.stage : undefined,
       state: message.state,
+      coachType: resolvedCoachType,
     };
   }
   return null;
