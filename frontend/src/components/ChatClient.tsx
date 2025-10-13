@@ -82,7 +82,14 @@ type Msg = {
 
 type ToastState = { type: "success" | "error"; message: string } | null;
 
-type EntryView = "select" | "resume" | "new" | "freeTalk" | "futureTalk" | "chat";
+type EntryView =
+  | "select"
+  | "resume"
+  | "new"
+  | "freeTalk"
+  | "freeTalkCoach"
+  | "futureTalk"
+  | "chat";
 
 type OptionsDraft = {
   option1: string;
@@ -127,6 +134,7 @@ export default function ChatClient() {
   const [freeTalkMood, setFreeTalkMood] = useState<string>("");
   const [freeTalkNote, setFreeTalkNote] = useState<string>("");
   const [freeTalkWantSmallTalk, setFreeTalkWantSmallTalk] = useState<"yes" | "no" | "">("");
+  const [pendingFreeTalkSummary, setPendingFreeTalkSummary] = useState<string | null>(null);
   const [futureGoalText, setFutureGoalText] = useState<string>("");
   const [futureTimeHorizon, setFutureTimeHorizon] = useState<"today" | "1w" | "3m" | "1y">("today");
   const [futureSuccessMetric, setFutureSuccessMetric] = useState<string>("");
@@ -718,6 +726,7 @@ export default function ChatClient() {
         window.localStorage.setItem("currentSessionStage", created.stage);
         setActiveCoachType(created.coachType);
         setSessionId(created.sessionId);
+        sessionIdRef.current = created.sessionId;
         setMessages([]);
         setHistoryHasMore(false);
         setHistoryCursor(null);
@@ -764,14 +773,11 @@ export default function ChatClient() {
     [enterChatWithSession],
   );
 
-  const handleFreeTalkSubmit = useCallback(async () => {
+  const handleFreeTalkSubmit = useCallback(() => {
     if (!freeTalkMood && freeTalkNote.trim().length === 0) {
       setEntryError("気分スコアまたは自由記入欄のいずれかを入力してください。");
       return;
     }
-    const created = await createSessionAndSelect();
-    if (!created) return;
-
     const lines: string[] = ["【チェックイン】"];
     if (freeTalkMood) {
       lines.push(`- 気分スコア: ${freeTalkMood}/10`);
@@ -783,15 +789,11 @@ export default function ChatClient() {
       lines.push(`- 雑談希望: ${freeTalkWantSmallTalk === "yes" ? "はい" : "いいえ"}`);
     }
     const summary = lines.join("\n");
-    setFreeTalkMood("");
-    setFreeTalkNote("");
-    setFreeTalkWantSmallTalk("");
-    setInput(summary);
-    showToast("success", "入力内容をチャット欄にセットしました。送信してセッションを始めましょう。");
+    setPendingFreeTalkSummary(summary);
     setEntryError(null);
-    setEntryView("chat");
+    showToast("success", "コーチを選んでチェックインを送信しましょう。");
+    setEntryView("freeTalkCoach");
   }, [
-    createSessionAndSelect,
     freeTalkMood,
     freeTalkNote,
     freeTalkWantSmallTalk,
@@ -886,6 +888,7 @@ export default function ChatClient() {
     showToast,
   ]);
 
+
   const activeSessionId = sessionIdRef.current;
   const sessionSelectValue = useMemo(() => {
     if (!activeSessionId) return "";
@@ -910,84 +913,136 @@ export default function ChatClient() {
     [updateSessionMeta],
   );
 
-  const onSend = useCallback(async () => {
-    const msg = input.trim();
-    if (!msg || restoring) return;
-    if (msg.length > MAX_MESSAGE_LENGTH) {
-      showToast("error", "メッセージは5000文字以内で入力してください。");
+  const sendMessage = useCallback(
+    async (rawMessage: string, options?: { skipToastOnSuccess?: boolean }) => {
+      const trimmed = rawMessage.trim();
+      if (!trimmed || restoring) {
+        return false;
+      }
+      if (trimmed.length > MAX_MESSAGE_LENGTH) {
+        showToast("error", "メッセージは5000文字以内で入力してください。");
+        return false;
+      }
+
+      const timestamp = Date.now();
+      const messageId = `user-${timestamp}`;
+      shouldAutoScrollRef.current = true;
+      setMessages((m) => [
+        ...m,
+        {
+          id: messageId,
+          role: "user",
+          content: trimmed,
+          createdAt: timestamp,
+          status: "sending",
+        },
+      ]);
+      setLoading(true);
+
+      try {
+        const activeSessionId = sessionIdRef.current;
+        if (!activeSessionId) throw new Error("セッションが見つかりませんでした。");
+
+        const coachTypeForRequest = activeCoachType ?? preferredCoachType;
+        const reply = await callWithAuth((token) =>
+          callCoach({ sessionId: activeSessionId, userText: trimmed, coachType: coachTypeForRequest }, token),
+        );
+
+        const now = Date.now();
+        window.localStorage.setItem("currentSessionStage", reply.stage);
+        updateSessionMeta(activeSessionId, {
+          stage: reply.stage,
+          coachType: reply.coachType,
+          updatedAt: now,
+        });
+        setActiveCoachType(reply.coachType);
+
+        setMessages((prev) =>
+          prev.map((message) =>
+            message.id === messageId && message.status !== "error"
+              ? { ...message, status: "sent" }
+              : message,
+          ),
+        );
+
+        const assistantMessage = formatAssistantMessage(reply.message);
+        if (!options?.skipToastOnSuccess) {
+          showToast("success", "メッセージを送信しました。");
+        }
+        pushAssistant(assistantMessage, undefined, {
+          stage: reply.stage,
+          state: reply.state,
+          coachType: reply.coachType,
+        });
+        return true;
+      } catch (error: unknown) {
+        const message = getErrorMessage(error);
+        setMessages((prev) =>
+          prev.map((m) => (m.id === messageId ? { ...m, status: "error" } : m)),
+        );
+        console.error("メッセージ送信に失敗しました", { error, message });
+        pushAssistant("メッセージの処理に失敗しました。時間をおいて再試行してください。");
+        showToast("error", "メッセージの送信に失敗しました。もう一度お試しください。");
+        return false;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [
+      restoring,
+      showToast,
+      callWithAuth,
+      pushAssistant,
+      updateSessionMeta,
+      activeCoachType,
+      preferredCoachType,
+    ],
+  );
+
+  const handleStartFreeTalkSession = useCallback(async () => {
+    const summary = pendingFreeTalkSummary;
+    if (!summary) {
+      setEntryError("チェックイン内容を入力してください。");
+      setEntryView("freeTalk");
       return;
     }
-
-    const timestamp = Date.now();
-    const messageId = `user-${timestamp}`;
-    shouldAutoScrollRef.current = true;
-    setMessages((m) => [
-      ...m,
-      {
-        id: messageId,
-        role: "user",
-        content: msg,
-        createdAt: timestamp,
-        status: "sending",
-      },
-    ]);
+    const created = await createSessionAndSelect(entryCoachSelection);
+    if (!created) {
+      return;
+    }
+    setEntryError(null);
+    setEntryView("chat");
+    setPendingFreeTalkSummary(null);
+    setFreeTalkMood("");
+    setFreeTalkNote("");
+    setFreeTalkWantSmallTalk("");
     setInput("");
-    setLoading(true);
-
-    try {
-      const activeSessionId = sessionIdRef.current;
-      if (!activeSessionId) throw new Error("セッションが見つかりませんでした。");
-
-      const coachTypeForRequest = activeCoachType ?? preferredCoachType;
-      const reply = await callWithAuth((token) =>
-        callCoach({ sessionId: activeSessionId, userText: msg, coachType: coachTypeForRequest }, token),
-      );
-
-      const now = Date.now();
-      window.localStorage.setItem("currentSessionStage", reply.stage);
-      updateSessionMeta(activeSessionId, {
-        stage: reply.stage,
-        coachType: reply.coachType,
-        updatedAt: now,
-      });
-      setActiveCoachType(reply.coachType);
-
-      setMessages((prev) =>
-        prev.map((message) =>
-          message.id === messageId && message.status !== "error"
-            ? { ...message, status: "sent" }
-            : message,
-        ),
-      );
-
-      const assistantMessage = formatAssistantMessage(reply.message);
-      showToast("success", "メッセージを送信しました。");
-      pushAssistant(assistantMessage, undefined, {
-        stage: reply.stage,
-        state: reply.state,
-        coachType: reply.coachType,
-      });
-    } catch (error: unknown) {
-      const message = getErrorMessage(error);
-      setMessages((prev) =>
-        prev.map((m) => (m.id === messageId ? { ...m, status: "error" } : m)),
-      )
-      console.error("メッセージ送信に失敗しました", { error, message });
-      pushAssistant("メッセージの処理に失敗しました。時間をおいて再試行してください。");
-      showToast("error", "メッセージの送信に失敗しました。もう一度お試しください。");
-    } finally {
-      setLoading(false);
+    const sent = await sendMessage(summary, { skipToastOnSuccess: true });
+    if (sent) {
+      showToast("success", "チェックイン内容を送信しました。");
+    } else {
+      setInput(summary);
     }
   }, [
-    callWithAuth,
-    pushAssistant,
-    restoring,
+    pendingFreeTalkSummary,
+    createSessionAndSelect,
+    entryCoachSelection,
+    sendMessage,
     showToast,
-    updateSessionMeta,
-    input,
-    activeCoachType,
-    preferredCoachType,
   ]);
+
+  const onSend = useCallback(async () => {
+    if (restoring) return;
+    const current = input;
+    if (!current.trim()) return;
+    setInput("");
+    const success = await sendMessage(current);
+    if (!success) {
+      setInput(current);
+    }
+  }, [input, sendMessage, restoring]);
+
+
 
   if (!authed) {
     return (
@@ -1337,11 +1392,93 @@ export default function ChatClient() {
                   type="submit"
                   className="inline-flex items-center gap-2 rounded-full bg-teal-600 px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2"
                 >
-                  入力をチャットに送る
+                  コーチを選ぶ
                 </button>
               </div>
             </form>
           </div>
+        </div>
+      );
+    } else if (entryView === "freeTalkCoach") {
+      const summary = pendingFreeTalkSummary ?? "";
+      entryContent = (
+        <div className="flex flex-col gap-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">コーチを選択</h2>
+              <p className="mt-1 text-sm text-slate-600">チェックイン内容を確認し、送信するコーチを決めてください。</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setEntryView("freeTalk")}
+                className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2"
+              >
+                <span aria-hidden="true">←</span>
+                入力を修正
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setEntryError(null);
+                  setEntryView("select");
+                }}
+                className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2"
+              >
+                <span aria-hidden="true">↺</span>
+                選択画面に戻る
+              </button>
+            </div>
+          </div>
+          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h3 className="text-sm font-semibold text-slate-800">共有するチェックイン内容</h3>
+            <p className="mt-1 text-xs text-slate-500">以下の内容が選択したコーチに自動送信されます。</p>
+            <pre className="mt-3 whitespace-pre-wrap rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-700">
+              {summary || "入力内容が確認できません。"}
+            </pre>
+          </div>
+          <div className="grid gap-4 lg:grid-cols-3">
+            {COACH_SELECTIONS.map((option) => {
+              const isSelected = entryCoachSelection === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setEntryCoachSelection(option.value)}
+                  className={`flex h-full flex-col gap-2 rounded-3xl border px-5 py-5 text-left shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 ${
+                    isSelected
+                      ? "border-teal-500 bg-white shadow-teal-500/30"
+                      : "border-slate-200 bg-white hover:border-teal-400"
+                  }`}
+                >
+                  <p className="text-base font-semibold text-slate-900">{option.name}</p>
+                  <p className="text-sm text-teal-700">{option.tagline}</p>
+                  <p className="text-xs text-slate-600">{option.description}</p>
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <p className="text-sm text-slate-600">
+              選択中のコーチ:
+              <span className="ml-2 font-semibold text-slate-900">{entryCoachDetails.name}</span>
+              （{entryCoachDetails.tagline}）
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                void handleStartFreeTalkSession();
+              }}
+              className="inline-flex items-center gap-2 rounded-full bg-teal-600 px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={creatingSession || loading || !pendingFreeTalkSummary}
+            >
+              <span aria-hidden="true" className="text-lg leading-none">
+                ＋
+              </span>
+              チェックインを送信して開始
+            </button>
+          </div>
+          {entryError ? <p className="text-sm text-rose-600">{entryError}</p> : null}
         </div>
       );
     } else if (entryView === "futureTalk") {
@@ -1694,35 +1831,41 @@ export default function ChatClient() {
             <div>
               <h2 className="text-base font-semibold text-slate-900">コーチの選択</h2>
               <p className="text-xs text-slate-500">新しいセッション開始時に利用するコーチを選べます。</p>
-              <div className="mt-3 space-y-2">
-                {COACH_SELECTIONS.map((option) => {
-                  const isActive = preferredCoachType === option.value;
-                  return (
-                    <label
-                      key={option.value}
-                      className={`flex cursor-pointer flex-col gap-1 rounded-2xl border px-3 py-3 text-left transition ${
-                        isActive
-                          ? "border-teal-500 bg-white shadow-sm shadow-teal-500/20"
-                          : "border-slate-300 bg-white/80 hover:border-teal-400"
-                      }`}
-                    >
-                      <span className="flex items-center gap-2">
-                        <input
-                          type="radio"
-                          name="preferred-coach"
-                          value={option.value}
-                          checked={isActive}
-                          onChange={() => handlePreferredCoachChange(option.value)}
-                          className="h-4 w-4 border-slate-300 text-teal-600 focus:ring-2 focus:ring-teal-500"
-                        />
-                        <span className="text-sm font-semibold text-slate-900">{option.name}</span>
-                      </span>
-                      <span className="text-xs text-teal-700">{option.tagline}</span>
-                      <span className="text-xs text-slate-500">{option.description}</span>
-                    </label>
-                  );
-                })}
-              </div>
+              {activeSessionId ? (
+                <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-500">
+                  現在のセッション中はコーチを変更できません。新しいセッションを開始する際に選択できます。
+                </div>
+              ) : (
+                <div className="mt-3 space-y-2">
+                  {COACH_SELECTIONS.map((option) => {
+                    const isActive = preferredCoachType === option.value;
+                    return (
+                      <label
+                        key={option.value}
+                        className={`flex cursor-pointer flex-col gap-1 rounded-2xl border px-3 py-3 text-left transition ${
+                          isActive
+                            ? "border-teal-500 bg-white shadow-sm shadow-teal-500/20"
+                            : "border-slate-300 bg-white/80 hover:border-teal-400"
+                        }`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <input
+                            type="radio"
+                            name="preferred-coach"
+                            value={option.value}
+                            checked={isActive}
+                            onChange={() => handlePreferredCoachChange(option.value)}
+                            className="h-4 w-4 border-slate-300 text-teal-600 focus:ring-2 focus:ring-teal-500"
+                          />
+                          <span className="text-sm font-semibold text-slate-900">{option.name}</span>
+                        </span>
+                        <span className="text-xs text-teal-700">{option.tagline}</span>
+                        <span className="text-xs text-slate-500">{option.description}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
             </div>
             <div>
               <h2 className="text-base font-semibold text-slate-900">セッション</h2>
