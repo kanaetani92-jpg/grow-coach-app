@@ -56,15 +56,6 @@ type Msg = {
 type SessionCache = { messages: Msg[]; stage?: Stage; coachType?: CoachType };
 type CoachPayload = { stage: Stage; message: string; state: CoachingState };
 
-type DialogueCategory = "anythingTalk" | "futureVision";
-
-type DialogueEntry = {
-  id: string;
-  category: DialogueCategory;
-  content: string;
-  createdAt: number;
-};
-
 type RouteHandler = (context: RequestContext) => Promise<void> | void;
 
 type RequestContext = {
@@ -120,10 +111,177 @@ if (!GEMINI_API_KEY) {
 const DEFAULT_COACH_TYPE: CoachType = "akito";
 const VALID_COACH_TYPES: ReadonlySet<CoachType> = new Set(COACH_TYPES);
 
-const DIALOGUE_CATEGORIES: ReadonlySet<DialogueCategory> = new Set([
-  "anythingTalk",
-  "futureVision",
-]);
+const HONORIFIC_OPTIONS = [
+  "san",
+  "kun",
+  "chan",
+  "noHonorific",
+  "english",
+  "other",
+] as const;
+type HonorificOption = (typeof HONORIFIC_OPTIONS)[number];
+
+const GENDER_OPTIONS = [
+  "female",
+  "male",
+  "nonBinary",
+  "transWoman",
+  "transMan",
+  "xGender",
+  "noAnswer",
+  "other",
+  "selfDescribe",
+] as const;
+type GenderOption = (typeof GENDER_OPTIONS)[number];
+
+const EMPLOYMENT_TYPES = ["fullTime", "partTime", "dispatch", "student", "other"] as const;
+type EmploymentTypeOption = (typeof EMPLOYMENT_TYPES)[number];
+
+const WORK_PATTERNS = [
+  "day",
+  "twoShift",
+  "threeShift",
+  "nightOnly",
+  "flexRemote",
+  "other",
+] as const;
+type WorkPatternOption = (typeof WORK_PATTERNS)[number];
+
+const LIVING_ARRANGEMENTS = ["alone", "withFamily", "withOthers", "noAnswer"] as const;
+type LivingArrangementOption = (typeof LIVING_ARRANGEMENTS)[number];
+
+const CARE_RESPONSIBILITIES = ["childcare", "caregiving", "pets", "none", "other"] as const;
+type CareResponsibilityOption = (typeof CARE_RESPONSIBILITIES)[number];
+
+const PERSONALITY_TRAITS = [
+  "extraversion",
+  "agreeableness",
+  "conscientiousness",
+  "emotionalStability",
+  "openness",
+] as const;
+type PersonalityTraitKey = (typeof PERSONALITY_TRAITS)[number];
+
+const PERSONALITY_TAGS = [
+  "logical",
+  "empathetic",
+  "careful",
+  "challenging",
+  "planned",
+  "flexible",
+  "observant",
+  "quickDecider",
+  "other",
+] as const;
+type PersonalityTagOption = (typeof PERSONALITY_TAGS)[number];
+
+const LIFE_AREAS = [
+  "sleep",
+  "nutrition",
+  "activity",
+  "work",
+  "learning",
+  "family",
+  "friends",
+  "hobby",
+  "finance",
+  "housing",
+  "physicalHealth",
+  "mental",
+  "rest",
+  "digital",
+  "timeManagement",
+] as const;
+type LifeAreaKey = (typeof LIFE_AREAS)[number];
+
+const COACHING_TOPICS = [
+  "sleepFatigue",
+  "stressCare",
+  "timeManagement",
+  "communication",
+  "careerLearning",
+  "healthHabits",
+  "finance",
+  "relationships",
+  "selfCompassion",
+  "selfEfficacy",
+  "other",
+] as const;
+type CoachingTopicOption = (typeof COACHING_TOPICS)[number];
+
+const SAFETY_CONCERNS = [
+  "none",
+  "insomnia",
+  "selfHarm",
+  "domesticViolence",
+  "substance",
+  "other",
+] as const;
+type SafetyConcernOption = (typeof SAFETY_CONCERNS)[number];
+
+type FaceSheetArea = {
+  satisfaction: number | null;
+  note: string;
+};
+
+type FaceSheetTopicSelection = {
+  id: CoachingTopicOption;
+  starred: boolean;
+};
+
+type FaceSheet = {
+  basic: {
+    nickname: string;
+    honorifics: HonorificOption[];
+    honorificOther: string;
+    gender: GenderOption[];
+    genderOther: string;
+    genderFreeText: string;
+    age: string;
+  };
+  work: {
+    role: string;
+    organization: string;
+    employmentTypes: EmploymentTypeOption[];
+    employmentOther: string;
+    workPatterns: WorkPatternOption[];
+    workPatternOther: string;
+    weeklyHours: string;
+    stressors: string;
+    supportResources: string;
+  };
+  family: {
+    livingArrangement: LivingArrangementOption;
+    household: string;
+    careResponsibilities: CareResponsibilityOption[];
+    careOther: string;
+    careTime: string;
+  };
+  personality: {
+    traits: Record<PersonalityTraitKey, number | null>;
+    tags: PersonalityTagOption[];
+    tagOther: string;
+    strengths: string;
+    cautions: string;
+  };
+  lifeInventory: {
+    areas: Record<LifeAreaKey, FaceSheetArea>;
+    dailyRoutine: string;
+  };
+  coaching: {
+    topics: FaceSheetTopicSelection[];
+    topicOther: string;
+    challenge: string;
+    kpi: string;
+  };
+  safety: {
+    concerns: SafetyConcernOption[];
+    concernOther: string;
+    consent: boolean;
+  };
+};
+
+type FaceSheetDocument = FaceSheet & { createdAt: number; updatedAt: number };
 
 const VALID_STAGES: ReadonlySet<Stage> = new Set([
   "intro",
@@ -149,7 +307,7 @@ const routes: Record<string, RouteHandler> = {
   "POST /api/coach": requireAuth(handleCoach),
   "GET /api/history": requireAuth(handleHistory),
   "GET /api/face-sheet": requireAuth(handleFaceSheet),
-  "POST /api/face-sheet/dialogues": requireAuth(handleCreateDialogue),
+  "PUT /api/face-sheet": requireAuth(handleUpdateFaceSheet),
   "GET /api": handleApiRoot,
 };
 
@@ -346,7 +504,7 @@ function handleApiRoot({ res }: RequestContext) {
       "/api/coach (POST)",
       "/api/history (GET)",
       "/api/face-sheet (GET)",
-      "/api/face-sheet/dialogues (POST)",
+      "/api/face-sheet (PUT)",
     ],
     time: new Date().toISOString(),
   });
@@ -559,74 +717,45 @@ async function handleHistory(context: RequestContext & { uid: string }) {
 }
 
 async function handleFaceSheet(context: RequestContext & { uid: string }) {
-  const { uid, res, query } = context;
-  const sessionParam = Array.isArray(query["sessionId"]) ? query["sessionId"][0] : query["sessionId"];
-  const sessionId = typeof sessionParam === "string" ? sessionParam : undefined;
-
-  if (!sessionId) {
-    sendJson(res, 400, { error: "missing sessionId" });
-    return;
-  }
+  const { uid, res } = context;
 
   try {
-    const history = await loadHistory(uid, sessionId);
-    const latestStateMessage = history.messages
-      .filter((item) => item.role === "coach" && item.state)
-      .sort((a, b) => a.createdAt - b.createdAt)
-      .pop();
-
-    const faceSheet = latestStateMessage?.state ?? null;
-    const stage = history.stage ?? latestStateMessage?.stage ?? null;
-
-    const sessionRef = db
+    const faceSheetRef = db
       .collection("users")
       .doc(uid)
-      .collection("sessions")
-      .doc(sessionId);
-
-    const dialoguesSnapshot = await sessionRef
-      .collection("dialogues")
-      .orderBy("createdAt", "asc")
-      .get();
-
-    const dialogues: Record<DialogueCategory, DialogueEntry[]> = {
-      anythingTalk: [],
-      futureVision: [],
-    };
-
-    for (const doc of dialoguesSnapshot.docs) {
-      const data = doc.data() as Record<string, unknown>;
-      const category = normalizeDialogueCategory(data.category);
-      const content = typeof data.content === "string" ? data.content : "";
-      const createdAt = typeof data.createdAt === "number" ? data.createdAt : undefined;
-      if (!category || !content || !createdAt) {
-        continue;
-      }
-      dialogues[category].push({
-        id: doc.id,
-        category,
-        content,
-        createdAt,
-      });
+      .collection("meta")
+      .doc("faceSheet");
+    const snapshot = await faceSheetRef.get();
+    if (!snapshot.exists) {
+      sendJson(res, 200, { faceSheet: null });
+      return;
     }
 
+    const data = snapshot.data() as Record<string, unknown> | undefined;
+    if (!data) {
+      sendJson(res, 200, { faceSheet: null });
+      return;
+    }
+
+    const faceSheet = sanitizeFaceSheetPayload(data);
+    const createdAt = typeof data.createdAt === "number" ? data.createdAt : undefined;
+    const updatedAt = typeof data.updatedAt === "number" ? data.updatedAt : undefined;
+
     sendJson(res, 200, {
-      sessionId,
-      stage,
       faceSheet,
-      dialogues,
+      createdAt,
+      updatedAt,
     });
   } catch (error) {
     log("error", "failed_to_fetch_face_sheet", {
       uid,
-      sessionId,
       error: serializeError(error),
     });
     sendJson(res, 500, { error: "failed to fetch face sheet" });
   }
 }
 
-async function handleCreateDialogue(context: RequestContext & { uid: string }) {
+async function handleUpdateFaceSheet(context: RequestContext & { uid: string }) {
   const { uid, res, body } = context;
 
   if (!body || typeof body !== "object") {
@@ -634,61 +763,39 @@ async function handleCreateDialogue(context: RequestContext & { uid: string }) {
     return;
   }
 
-  const sessionId = getStringField(body, "sessionId");
-  const category = normalizeDialogueCategory((body as Record<string, unknown>).category);
-  const contentRaw = (body as Record<string, unknown>).content;
-  const contentValue = typeof contentRaw === "string" ? contentRaw : undefined;
-  const content = contentValue ? sanitizeDialogueContent(contentValue) : "";
+  const payload = (body as Record<string, unknown>).faceSheet ?? body;
+  const faceSheet = sanitizeFaceSheetPayload(payload);
 
-  if (!sessionId || !category) {
-    sendJson(res, 400, { error: "invalid body" });
-    return;
-  }
-
-  if (!content) {
-    sendJson(res, 400, { error: "content is required" });
+  if (!faceSheet) {
+    sendJson(res, 400, { error: "invalid face sheet" });
     return;
   }
 
   try {
-    const sessionRef = db
+    const faceSheetRef = db
       .collection("users")
       .doc(uid)
-      .collection("sessions")
-      .doc(sessionId);
+      .collection("meta")
+      .doc("faceSheet");
 
-    const snapshot = await sessionRef.get();
-    if (!snapshot.exists) {
-      sendJson(res, 404, { error: "session not found" });
-      return;
-    }
+    const now = Date.now();
+    const snapshot = await faceSheetRef.get();
+    const existing = snapshot.exists ? (snapshot.data() as Record<string, unknown>) : undefined;
+    const createdAt =
+      existing && typeof existing.createdAt === "number" ? (existing.createdAt as number) : now;
 
-    const createdAt = Date.now();
-    const entryData = { category, content, createdAt };
+    const document: FaceSheetDocument = { ...faceSheet, createdAt, updatedAt: now };
 
-    const batch = db.batch();
-    const docRef = sessionRef.collection("dialogues").doc();
-    batch.set(docRef, entryData);
-    batch.set(sessionRef, { updatedAt: createdAt }, { merge: true });
-    await batch.commit();
+    await faceSheetRef.set(document, { merge: false });
 
-    const entry: DialogueEntry = {
-      id: docRef.id,
-      category,
-      content,
-      createdAt,
-    };
-
-    log("info", "dialogue_saved", { uid, sessionId, category, createdAt });
-    sendJson(res, 200, { entry });
+    log("info", "face_sheet_saved", { uid, updatedAt: now });
+    sendJson(res, 200, { faceSheet, createdAt, updatedAt: now });
   } catch (error) {
-    log("error", "failed_to_save_dialogue", {
+    log("error", "failed_to_save_face_sheet", {
       uid,
-      sessionId,
-      category,
       error: serializeError(error),
     });
-    sendJson(res, 500, { error: "failed to save dialogue" });
+    sendJson(res, 500, { error: "failed to save face sheet" });
   }
 }
 
@@ -1113,31 +1220,312 @@ function normalizeCoachType(value: unknown): CoachType | undefined {
     : undefined;
 }
 
-function normalizeDialogueCategory(value: unknown): DialogueCategory | undefined {
-  if (typeof value !== "string") {
-    return undefined;
+const HONORIFIC_SET = new Set<HonorificOption>(HONORIFIC_OPTIONS);
+const GENDER_SET = new Set<GenderOption>(GENDER_OPTIONS);
+const EMPLOYMENT_TYPE_SET = new Set<EmploymentTypeOption>(EMPLOYMENT_TYPES);
+const WORK_PATTERN_SET = new Set<WorkPatternOption>(WORK_PATTERNS);
+const LIVING_ARRANGEMENT_SET = new Set<LivingArrangementOption>(LIVING_ARRANGEMENTS);
+const CARE_RESPONSIBILITY_SET = new Set<CareResponsibilityOption>(CARE_RESPONSIBILITIES);
+const PERSONALITY_TAG_SET = new Set<PersonalityTagOption>(PERSONALITY_TAGS);
+const COACHING_TOPIC_SET = new Set<CoachingTopicOption>(COACHING_TOPICS);
+const SAFETY_CONCERN_SET = new Set<SafetyConcernOption>(SAFETY_CONCERNS);
+
+function sanitizeFaceSheetPayload(value: unknown): FaceSheet | null {
+  if (!isRecord(value)) {
+    return null;
   }
 
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-
-  return DIALOGUE_CATEGORIES.has(trimmed as DialogueCategory)
-    ? (trimmed as DialogueCategory)
-    : undefined;
+  return {
+    basic: sanitizeBasicSection(value.basic),
+    work: sanitizeWorkSection(value.work),
+    family: sanitizeFamilySection(value.family),
+    personality: sanitizePersonalitySection(value.personality),
+    lifeInventory: sanitizeLifeInventorySection(value.lifeInventory),
+    coaching: sanitizeCoachingSection(value.coaching),
+    safety: sanitizeSafetySection(value.safety),
+  };
 }
 
-function sanitizeDialogueContent(value: string): string {
+function sanitizeBasicSection(input: unknown): FaceSheet["basic"] {
+  const record = isRecord(input) ? input : {};
+  return {
+    nickname: sanitizeText(record.nickname, 120),
+    honorifics: sanitizeSelectionArray(record.honorifics, HONORIFIC_SET),
+    honorificOther: sanitizeText(record.honorificOther, 120),
+    gender: sanitizeSelectionArray(record.gender, GENDER_SET),
+    genderOther: sanitizeText(record.genderOther, 120),
+    genderFreeText: sanitizeText(record.genderFreeText, 1000),
+    age: sanitizeText(record.age, 32),
+  };
+}
+
+function sanitizeWorkSection(input: unknown): FaceSheet["work"] {
+  const record = isRecord(input) ? input : {};
+  return {
+    role: sanitizeText(record.role, 200),
+    organization: sanitizeText(record.organization, 200),
+    employmentTypes: sanitizeSelectionArray(record.employmentTypes, EMPLOYMENT_TYPE_SET),
+    employmentOther: sanitizeText(record.employmentOther, 120),
+    workPatterns: sanitizeSelectionArray(record.workPatterns, WORK_PATTERN_SET),
+    workPatternOther: sanitizeText(record.workPatternOther, 120),
+    weeklyHours: sanitizeText(record.weeklyHours, 40),
+    stressors: sanitizeText(record.stressors, 1200),
+    supportResources: sanitizeText(record.supportResources, 1200),
+  };
+}
+
+function sanitizeFamilySection(input: unknown): FaceSheet["family"] {
+  const record = isRecord(input) ? input : {};
+  const living = sanitizeSingleSelection(
+    record.livingArrangement,
+    LIVING_ARRANGEMENT_SET,
+    "noAnswer",
+  );
+  const responsibilities = sanitizeSelectionArray(record.careResponsibilities, CARE_RESPONSIBILITY_SET);
+  return {
+    livingArrangement: living,
+    household: sanitizeText(record.household, 1200),
+    careResponsibilities: responsibilities,
+    careOther: sanitizeText(record.careOther, 120),
+    careTime: sanitizeText(record.careTime, 600),
+  };
+}
+
+function sanitizePersonalitySection(input: unknown): FaceSheet["personality"] {
+  const record = isRecord(input) ? input : {};
+  return {
+    traits: sanitizeTraitScores(record.traits),
+    tags: sanitizeSelectionArray(record.tags, PERSONALITY_TAG_SET),
+    tagOther: sanitizeText(record.tagOther, 120),
+    strengths: sanitizeText(record.strengths, 1200),
+    cautions: sanitizeText(record.cautions, 1200),
+  };
+}
+
+function sanitizeLifeInventorySection(input: unknown): FaceSheet["lifeInventory"] {
+  const record = isRecord(input) ? input : {};
+  return {
+    areas: sanitizeLifeAreas(record.areas),
+    dailyRoutine: sanitizeText(record.dailyRoutine, 2000),
+  };
+}
+
+function sanitizeCoachingSection(input: unknown): FaceSheet["coaching"] {
+  const record = isRecord(input) ? input : {};
+  const topics = sanitizeTopicSelections(record.topics);
+  return {
+    topics,
+    topicOther: sanitizeText(record.topicOther, 600),
+    challenge: sanitizeText(record.challenge, 1200),
+    kpi: sanitizeText(record.kpi, 1200),
+  };
+}
+
+function sanitizeSafetySection(input: unknown): FaceSheet["safety"] {
+  const record = isRecord(input) ? input : {};
+  const concerns = sanitizeSelectionArray(record.concerns, SAFETY_CONCERN_SET);
+  const normalizedConcerns =
+    concerns.includes("none") && concerns.length > 1
+      ? concerns.filter((item) => item !== "none")
+      : concerns;
+  return {
+    concerns: normalizedConcerns,
+    concernOther: sanitizeText(record.concernOther, 600),
+    consent: sanitizeBoolean(record.consent),
+  };
+}
+
+function sanitizeSelectionArray<T extends string>(
+  value: unknown,
+  allowed: ReadonlySet<T>,
+): T[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const result: T[] = [];
+  for (const item of value) {
+    if (typeof item !== "string") {
+      continue;
+    }
+    const trimmed = item.trim() as T;
+    if (!trimmed) {
+      continue;
+    }
+    if (allowed.has(trimmed) && !result.includes(trimmed)) {
+      result.push(trimmed);
+    }
+  }
+  return result;
+}
+
+function sanitizeSingleSelection<T extends string>(
+  value: unknown,
+  allowed: ReadonlySet<T>,
+  fallback: T,
+): T {
+  if (typeof value === "string") {
+    const trimmed = value.trim() as T;
+    if (trimmed && allowed.has(trimmed)) {
+      return trimmed;
+    }
+  }
+  return fallback;
+}
+
+function sanitizeTraitScores(value: unknown): Record<PersonalityTraitKey, number | null> {
+  const record = isRecord(value) ? value : {};
+  const traits: Record<PersonalityTraitKey, number | null> = {
+    extraversion: null,
+    agreeableness: null,
+    conscientiousness: null,
+    emotionalStability: null,
+    openness: null,
+  };
+  for (const key of PERSONALITY_TRAITS) {
+    traits[key] = sanitizeTraitScore(record[key]);
+  }
+  return traits;
+}
+
+function sanitizeTraitScore(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return clampScore(Math.round(value));
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    const parsed = Number.parseInt(trimmed, 10);
+    if (Number.isFinite(parsed)) {
+      return clampScore(parsed);
+    }
+  }
+  return null;
+}
+
+function clampScore(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 1;
+  }
+  if (value < 1) {
+    return 1;
+  }
+  if (value > 5) {
+    return 5;
+  }
+  return value;
+}
+
+function sanitizeLifeAreas(value: unknown): Record<LifeAreaKey, FaceSheetArea> {
+  const record = isRecord(value) ? value : {};
+  const result: Record<LifeAreaKey, FaceSheetArea> = {} as Record<LifeAreaKey, FaceSheetArea>;
+  for (const key of LIFE_AREAS) {
+    const areaValue = isRecord(record[key]) ? (record[key] as Record<string, unknown>) : {};
+    const satisfaction = sanitizeSatisfaction(areaValue.satisfaction ?? areaValue.score);
+    const memoSource =
+      areaValue.note ?? areaValue.memo ?? areaValue.comment ?? areaValue.text ?? "";
+    result[key] = {
+      satisfaction,
+      note: sanitizeText(memoSource, 600),
+    };
+  }
+  return result;
+}
+
+function sanitizeSatisfaction(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return clampSatisfaction(value);
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    const parsed = Number.parseFloat(trimmed);
+    if (Number.isFinite(parsed)) {
+      return clampSatisfaction(parsed);
+    }
+  }
+  return null;
+}
+
+function clampSatisfaction(value: number): number {
+  const rounded = Math.round(value);
+  if (rounded < 0) {
+    return 0;
+  }
+  if (rounded > 10) {
+    return 10;
+  }
+  return rounded;
+}
+
+function sanitizeTopicSelections(value: unknown): FaceSheetTopicSelection[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const result: FaceSheetTopicSelection[] = [];
+  const seen = new Set<CoachingTopicOption>();
+  for (const item of value) {
+    if (!isRecord(item)) {
+      continue;
+    }
+    const idValue = item.id;
+    if (typeof idValue !== "string") {
+      continue;
+    }
+    const trimmed = idValue.trim() as CoachingTopicOption;
+    if (!trimmed || !COACHING_TOPIC_SET.has(trimmed) || seen.has(trimmed)) {
+      continue;
+    }
+    seen.add(trimmed);
+    const starred = sanitizeBoolean(item.starred);
+    result.push({ id: trimmed, starred });
+  }
+
+  let starCount = 0;
+  return result.map((topic) => {
+    if (topic.starred) {
+      if (starCount >= 3) {
+        return { ...topic, starred: false };
+      }
+      starCount += 1;
+    }
+    return topic;
+  });
+}
+
+function sanitizeBoolean(value: unknown): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+    if (["1", "true", "yes", "on"].includes(normalized)) {
+      return true;
+    }
+    if (["0", "false", "no", "off"].includes(normalized)) {
+      return false;
+    }
+  }
+  return Boolean(value);
+}
+
+function sanitizeText(value: unknown, maxLength = 500): string {
+  if (typeof value !== "string") {
+    return "";
+  }
   const normalizedNewline = value.replace(/\r\n?/g, "\n");
   const withoutControl = normalizedNewline.replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, "");
   const trimmed = withoutControl.trim();
   if (!trimmed) {
     return "";
   }
-
-  const limit = 4000;
-  return trimmed.length > limit ? trimmed.slice(0, limit) : trimmed;
+  return trimmed.length > maxLength ? trimmed.slice(0, maxLength) : trimmed;
 }
 
 function normalizeStage(value: unknown): Stage | undefined {

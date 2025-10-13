@@ -61,20 +61,197 @@ export type SessionSummary = {
   updatedAt?: number;
 };
 
-export type DialogueCategory = "anythingTalk" | "futureVision";
+export const HONORIFIC_OPTIONS = [
+  "san",
+  "kun",
+  "chan",
+  "noHonorific",
+  "english",
+  "other",
+] as const;
+export type HonorificOption = (typeof HONORIFIC_OPTIONS)[number];
 
-export type DialogueEntry = {
-  id: string;
-  category: DialogueCategory;
-  content: string;
-  createdAt: number;
+export const GENDER_OPTIONS = [
+  "female",
+  "male",
+  "nonBinary",
+  "transWoman",
+  "transMan",
+  "xGender",
+  "noAnswer",
+  "other",
+  "selfDescribe",
+] as const;
+export type GenderOption = (typeof GENDER_OPTIONS)[number];
+
+export const EMPLOYMENT_TYPES = [
+  "fullTime",
+  "partTime",
+  "dispatch",
+  "student",
+  "other",
+] as const;
+export type EmploymentTypeOption = (typeof EMPLOYMENT_TYPES)[number];
+
+export const WORK_PATTERNS = [
+  "day",
+  "twoShift",
+  "threeShift",
+  "nightOnly",
+  "flexRemote",
+  "other",
+] as const;
+export type WorkPatternOption = (typeof WORK_PATTERNS)[number];
+
+export const LIVING_ARRANGEMENTS = [
+  "alone",
+  "withFamily",
+  "withOthers",
+  "noAnswer",
+] as const;
+export type LivingArrangementOption = (typeof LIVING_ARRANGEMENTS)[number];
+
+export const CARE_RESPONSIBILITIES = [
+  "childcare",
+  "caregiving",
+  "pets",
+  "none",
+  "other",
+] as const;
+export type CareResponsibilityOption = (typeof CARE_RESPONSIBILITIES)[number];
+
+export const PERSONALITY_TRAITS = [
+  "extraversion",
+  "agreeableness",
+  "conscientiousness",
+  "emotionalStability",
+  "openness",
+] as const;
+export type PersonalityTraitKey = (typeof PERSONALITY_TRAITS)[number];
+
+export const PERSONALITY_TAGS = [
+  "logical",
+  "empathetic",
+  "careful",
+  "challenging",
+  "planned",
+  "flexible",
+  "observant",
+  "quickDecider",
+  "other",
+] as const;
+export type PersonalityTagOption = (typeof PERSONALITY_TAGS)[number];
+
+export const LIFE_AREAS = [
+  "sleep",
+  "nutrition",
+  "activity",
+  "work",
+  "learning",
+  "family",
+  "friends",
+  "hobby",
+  "finance",
+  "housing",
+  "physicalHealth",
+  "mental",
+  "rest",
+  "digital",
+  "timeManagement",
+] as const;
+export type LifeAreaKey = (typeof LIFE_AREAS)[number];
+
+export const COACHING_TOPICS = [
+  "sleepFatigue",
+  "stressCare",
+  "timeManagement",
+  "communication",
+  "careerLearning",
+  "healthHabits",
+  "finance",
+  "relationships",
+  "selfCompassion",
+  "selfEfficacy",
+  "other",
+] as const;
+export type CoachingTopicOption = (typeof COACHING_TOPICS)[number];
+
+export const SAFETY_CONCERNS = [
+  "none",
+  "insomnia",
+  "selfHarm",
+  "domesticViolence",
+  "substance",
+  "other",
+] as const;
+export type SafetyConcernOption = (typeof SAFETY_CONCERNS)[number];
+
+export type FaceSheetArea = {
+  satisfaction: number | null;
+  note: string;
+};
+
+export type FaceSheetTopicSelection = {
+  id: CoachingTopicOption;
+  starred: boolean;
+};
+
+export type FaceSheet = {
+  basic: {
+    nickname: string;
+    honorifics: HonorificOption[];
+    honorificOther: string;
+    gender: GenderOption[];
+    genderOther: string;
+    genderFreeText: string;
+    age: string;
+  };
+  work: {
+    role: string;
+    organization: string;
+    employmentTypes: EmploymentTypeOption[];
+    employmentOther: string;
+    workPatterns: WorkPatternOption[];
+    workPatternOther: string;
+    weeklyHours: string;
+    stressors: string;
+    supportResources: string;
+  };
+  family: {
+    livingArrangement: LivingArrangementOption;
+    household: string;
+    careResponsibilities: CareResponsibilityOption[];
+    careOther: string;
+    careTime: string;
+  };
+  personality: {
+    traits: Record<PersonalityTraitKey, number | null>;
+    tags: PersonalityTagOption[];
+    tagOther: string;
+    strengths: string;
+    cautions: string;
+  };
+  lifeInventory: {
+    areas: Record<LifeAreaKey, FaceSheetArea>;
+    dailyRoutine: string;
+  };
+  coaching: {
+    topics: FaceSheetTopicSelection[];
+    topicOther: string;
+    challenge: string;
+    kpi: string;
+  };
+  safety: {
+    concerns: SafetyConcernOption[];
+    concernOther: string;
+    consent: boolean;
+  };
 };
 
 export type FaceSheetResponse = {
-  sessionId: string;
-  stage: string | null;
-  faceSheet: CoachingState | null;
-  dialogues: Record<DialogueCategory, DialogueEntry[]>;
+  faceSheet: FaceSheet | null;
+  createdAt?: number;
+  updatedAt?: number;
 };
 
 function getApiBase(): string {
@@ -184,24 +361,20 @@ export async function fetchHistory(
   });
 }
 
-export async function fetchFaceSheet(
-  sessionId: string,
-  idToken: string,
-): Promise<FaceSheetResponse> {
-  const params = new URLSearchParams({ sessionId });
-  return apiFetch(`/face-sheet?${params.toString()}`, {
+export async function fetchFaceSheet(idToken: string): Promise<FaceSheetResponse> {
+  return apiFetch("/face-sheet", {
     method: "GET",
     headers: { Authorization: `Bearer ${idToken}` },
   });
 }
 
-export async function addDialogueEntry(
-  payload: { sessionId: string; category: DialogueCategory; content: string },
+export async function saveFaceSheet(
+  faceSheet: FaceSheet,
   idToken: string,
-): Promise<{ entry: DialogueEntry }> {
-  return apiFetch("/face-sheet/dialogues", {
-    method: "POST",
+): Promise<{ faceSheet: FaceSheet; createdAt: number; updatedAt: number }> {
+  return apiFetch("/face-sheet", {
+    method: "PUT",
     headers: { Authorization: `Bearer ${idToken}` },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ faceSheet }),
   });
 }
