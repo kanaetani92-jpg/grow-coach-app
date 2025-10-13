@@ -1,6 +1,4 @@
 // サーバーコンポーネント（表示だけ）
-import Link from "next/link";
-
 import ChatClient from "@/components/ChatClient";
 import SignInPanel from "@/components/SignInPanel";
 
@@ -15,17 +13,6 @@ export default function Page() {
           <p className="text-sm text-slate-600 sm:text-base">
             Grow Coach と一緒にゴールを整理し、行動計画を立てましょう。
           </p>
-          <div>
-            <Link
-              href="/grow-guides"
-              className="inline-flex items-center gap-2 rounded-full border border-teal-200 bg-white px-4 py-2 text-sm font-semibold text-teal-700 shadow-sm transition hover:border-teal-300 hover:bg-teal-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2"
-            >
-              GROWモジュールガイドを見る
-              <span aria-hidden="true" className="text-base leading-none">
-                →
-              </span>
-            </Link>
-          </div>
         </header>
 
         <div className="grid gap-6 lg:grid-cols-[320px,1fr]">
