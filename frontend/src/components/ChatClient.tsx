@@ -89,6 +89,7 @@ type EntryView =
   | "freeTalk"
   | "freeTalkCoach"
   | "futureTalk"
+  | "futureTalkCoach"
   | "chat";
 
 type OptionsDraft = {
@@ -139,6 +140,7 @@ export default function ChatClient() {
   const [futureTimeHorizon, setFutureTimeHorizon] = useState<"today" | "1w" | "3m" | "1y">("today");
   const [futureSuccessMetric, setFutureSuccessMetric] = useState<string>("");
   const [futureImportance, setFutureImportance] = useState<number>(5);
+  const [pendingFutureTalkSummary, setPendingFutureTalkSummary] = useState<string | null>(null);
   const [optionsDraft, setOptionsDraft] = useState<OptionsDraft>({
     option1: "",
     option2: "",
@@ -800,14 +802,11 @@ export default function ChatClient() {
     showToast,
   ]);
 
-  const handleFutureTalkSubmit = useCallback(async () => {
+  const handleFutureTalkSubmit = useCallback(() => {
     if (!futureGoalText.trim() || !futureSuccessMetric.trim()) {
       setEntryError("ゴールと成功の目安を入力してください。");
       return;
     }
-    const created = await createSessionAndSelect();
-    if (!created) return;
-
     const lines: string[] = ["【ゴール設定】"];
     lines.push(`- ゴール: ${futureGoalText.trim()}`);
     lines.push(`- 期間: ${TIME_HORIZON_LABELS[futureTimeHorizon]}`);
@@ -861,24 +860,13 @@ export default function ChatClient() {
       }
     }
 
-    const summary = [
-      ...lines,
-      ...optionLines,
-      ...willLines,
-    ].join("\n");
+    const summary = [...lines, ...optionLines, ...willLines].join("\n");
 
-    setFutureGoalText("");
-    setFutureSuccessMetric("");
-    setFutureTimeHorizon("today");
-    setFutureImportance(5);
-    setOptionsDraft({ option1: "", option2: "", option3: "", criteria: "", pros1: "", pros2: "", pros3: "", chosen: "" });
-    setWillDraft({ ifThen: "", barrier: "", antiBarrier: "", startTime: "" });
-    setInput(summary);
-    showToast("success", "入力内容をチャット欄にセットしました。送信してセッションを始めましょう。");
+    setPendingFutureTalkSummary(summary);
+    showToast("success", "コーチを選んでセッションを始めましょう。");
     setEntryError(null);
-    setEntryView("chat");
+    setEntryView("futureTalkCoach");
   }, [
-    createSessionAndSelect,
     futureGoalText,
     futureSuccessMetric,
     futureTimeHorizon,
@@ -1025,6 +1013,50 @@ export default function ChatClient() {
     }
   }, [
     pendingFreeTalkSummary,
+    createSessionAndSelect,
+    entryCoachSelection,
+    sendMessage,
+    showToast,
+  ]);
+
+  const handleStartFutureTalkSession = useCallback(async () => {
+    const summary = pendingFutureTalkSummary;
+    if (!summary) {
+      setEntryError("ゴール設定の内容を入力してください。");
+      setEntryView("futureTalk");
+      return;
+    }
+    const created = await createSessionAndSelect(entryCoachSelection);
+    if (!created) {
+      return;
+    }
+    setEntryError(null);
+    setEntryView("chat");
+    setPendingFutureTalkSummary(null);
+    setFutureGoalText("");
+    setFutureSuccessMetric("");
+    setFutureTimeHorizon("today");
+    setFutureImportance(5);
+    setOptionsDraft({
+      option1: "",
+      option2: "",
+      option3: "",
+      criteria: "",
+      pros1: "",
+      pros2: "",
+      pros3: "",
+      chosen: "",
+    });
+    setWillDraft({ ifThen: "", barrier: "", antiBarrier: "", startTime: "" });
+    setInput("");
+    const sent = await sendMessage(summary, { skipToastOnSuccess: true });
+    if (sent) {
+      showToast("success", "ゴール設定の内容を送信しました。");
+    } else {
+      setInput(summary);
+    }
+  }, [
+    pendingFutureTalkSummary,
     createSessionAndSelect,
     entryCoachSelection,
     sendMessage,
@@ -1476,6 +1508,88 @@ export default function ChatClient() {
                 ＋
               </span>
               チェックインを送信して開始
+            </button>
+          </div>
+          {entryError ? <p className="text-sm text-rose-600">{entryError}</p> : null}
+        </div>
+      );
+    } else if (entryView === "futureTalkCoach") {
+      const summary = pendingFutureTalkSummary ?? "";
+      entryContent = (
+        <div className="flex flex-col gap-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">コーチを選択</h2>
+              <p className="mt-1 text-sm text-slate-600">ゴール設定の内容を確認し、送信するコーチを決めてください。</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setEntryView("futureTalk")}
+                className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2"
+              >
+                <span aria-hidden="true">←</span>
+                入力を修正
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setEntryError(null);
+                  setEntryView("select");
+                }}
+                className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2"
+              >
+                <span aria-hidden="true">↺</span>
+                選択画面に戻る
+              </button>
+            </div>
+          </div>
+          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h3 className="text-sm font-semibold text-slate-800">共有するゴール設定</h3>
+            <p className="mt-1 text-xs text-slate-500">以下の内容が選択したコーチに自動送信されます。</p>
+            <pre className="mt-3 whitespace-pre-wrap rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-700">
+              {summary || "入力内容が確認できません。"}
+            </pre>
+          </div>
+          <div className="grid gap-4 lg:grid-cols-3">
+            {COACH_SELECTIONS.map((option) => {
+              const isSelected = entryCoachSelection === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setEntryCoachSelection(option.value)}
+                  className={`flex h-full flex-col gap-2 rounded-3xl border px-5 py-5 text-left shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 ${
+                    isSelected
+                      ? "border-teal-500 bg-white shadow-teal-500/30"
+                      : "border-slate-200 bg-white hover:border-teal-400"
+                  }`}
+                >
+                  <p className="text-base font-semibold text-slate-900">{option.name}</p>
+                  <p className="text-sm text-teal-700">{option.tagline}</p>
+                  <p className="text-xs text-slate-600">{option.description}</p>
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <p className="text-sm text-slate-600">
+              選択中のコーチ:
+              <span className="ml-2 font-semibold text-slate-900">{entryCoachDetails.name}</span>
+              （{entryCoachDetails.tagline}）
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                void handleStartFutureTalkSession();
+              }}
+              className="inline-flex items-center gap-2 rounded-full bg-teal-600 px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={creatingSession || loading || !pendingFutureTalkSummary}
+            >
+              <span aria-hidden="true" className="text-lg leading-none">
+                ＋
+              </span>
+              ゴール設定を送信して開始
             </button>
           </div>
           {entryError ? <p className="text-sm text-rose-600">{entryError}</p> : null}
