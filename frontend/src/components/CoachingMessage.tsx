@@ -10,6 +10,32 @@ type Block =
   | { type: "paragraph"; text: string }
   | { type: "list"; ordered: boolean; items: ListItem[] };
 
+function sanitizeCoachingContent(content: string): string {
+  const lines = content.split(/\r?\n/);
+  const sanitizedLines: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const normalized = trimmed
+      .replace(/^#+\s*/, "")
+      .replace(/[\*`_~]/g, "")
+      .replace(/[：:]+\s*$/, "")
+      .toLowerCase();
+
+    if (normalized === "coaching") {
+      continue;
+    }
+
+    if (normalized === "state json") {
+      break;
+    }
+
+    sanitizedLines.push(line);
+  }
+
+  return sanitizedLines.join("\n").trim();
+}
+
 function parseCoachingBlocks(content: string): Block[] {
   const lines = content.split(/\r?\n/);
   const blocks: Block[] = [];
@@ -117,10 +143,11 @@ function renderInline(text: string): ReactNode {
 }
 
 const CoachingMessage = memo(function CoachingMessage({ content }: { content: string }) {
-  const blocks = useMemo(() => parseCoachingBlocks(content), [content]);
+  const sanitizedContent = useMemo(() => sanitizeCoachingContent(content), [content]);
+  const blocks = useMemo(() => parseCoachingBlocks(sanitizedContent), [sanitizedContent]);
 
   if (blocks.length === 0) {
-    return <p className="whitespace-pre-line">{content}</p>;
+    return <p className="whitespace-pre-line">{sanitizedContent}</p>;
   }
 
   return (
