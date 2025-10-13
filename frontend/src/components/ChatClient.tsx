@@ -66,6 +66,7 @@ const TIME_HORIZON_LABELS: Record<"today" | "1w" | "3m" | "1y", string> = {
 };
 import { getErrorMessage } from "@/lib/errors";
 import { logEvent } from "@/lib/logger";
+import CoachingMessage from "./CoachingMessage";
 
 const HISTORY_PAGE_SIZE = 25;
 const MAX_MESSAGE_LENGTH = 5000;
@@ -2074,7 +2075,11 @@ export default function ChatClient() {
                               : "border border-slate-200 bg-white text-slate-900"
                           }`}
                         >
-                          <p className="chat-text text-[15px] leading-relaxed">{message.content}</p>
+                          {message.role === "assistant" ? (
+                            <CoachingMessage content={message.content} />
+                          ) : (
+                            <p className="chat-text text-[15px] leading-relaxed">{message.content}</p>
+                          )}
                           <div
                             className={`mt-2 flex items-center gap-2 text-[11px] ${
                               message.role === "user"
