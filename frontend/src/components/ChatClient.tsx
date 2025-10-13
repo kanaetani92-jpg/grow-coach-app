@@ -119,6 +119,7 @@ export default function ChatClient() {
   const [preferredCoachType, setPreferredCoachType] = useState<CoachType>(() =>
     getInitialPreferredCoachType(),
   );
+  const preferredCoachTypeRef = useRef(preferredCoachType);
   const [activeCoachType, setActiveCoachType] = useState<CoachType | null>(() =>
     getInitialActiveCoachType(),
   );
@@ -336,7 +337,7 @@ export default function ChatClient() {
       let createdSession: SessionSummary | null = null;
       if (!nextId) {
         const created = await callWithAuth((token) =>
-          createSession(token, preferredCoachType),
+          createSession(token, preferredCoachTypeRef.current ?? DEFAULT_COACH_TYPE),
         );
         const now = Date.now();
         createdSession = {
@@ -389,7 +390,7 @@ export default function ChatClient() {
     } finally {
       setSessionsLoading(false);
     }
-  }, [authed, callWithAuth, showToast, isOnline, preferredCoachType]);
+  }, [authed, callWithAuth, showToast, isOnline]);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
@@ -471,7 +472,8 @@ export default function ChatClient() {
         if (meta?.state) {
           entry.state = meta.state;
         }
-        const resolvedCoachType = meta?.coachType ?? activeCoachType ?? preferredCoachType;
+        const fallbackCoachType = activeCoachType ?? preferredCoachTypeRef.current ?? DEFAULT_COACH_TYPE;
+        const resolvedCoachType = meta?.coachType ?? fallbackCoachType;
         if (resolvedCoachType) {
           entry.coachType = resolvedCoachType;
         }
@@ -484,8 +486,12 @@ export default function ChatClient() {
         setCoachingState(meta.state);
       }
     },
-    [activeCoachType, preferredCoachType],
+    [activeCoachType],
   );
+
+  useEffect(() => {
+    preferredCoachTypeRef.current = preferredCoachType;
+  }, [preferredCoachType]);
 
   useEffect(() => {
     if (!authed || !sessionId) return;
@@ -538,7 +544,7 @@ export default function ChatClient() {
         if (error instanceof ApiError && error.status === 404) {
           try {
             const created = await callWithAuth((token) =>
-              createSession(token, preferredCoachType),
+              createSession(token, preferredCoachTypeRef.current ?? DEFAULT_COACH_TYPE),
             );
             if (canceled) return;
             const now = Date.now();
@@ -608,7 +614,7 @@ export default function ChatClient() {
     return () => {
       canceled = true;
     };
-  }, [authed, sessionId, callWithAuth, pushAssistant, updateSessionMeta, preferredCoachType]);
+  }, [authed, sessionId, callWithAuth, pushAssistant, updateSessionMeta]);
 
   useEffect(() => {
     if (!authed || !sessionId) {
@@ -817,7 +823,7 @@ export default function ChatClient() {
     setCreatingSession(true);
     try {
       const created = await callWithAuth((token) =>
-        createSession(token, preferredCoachType),
+        createSession(token, preferredCoachTypeRef.current ?? DEFAULT_COACH_TYPE),
       );
       const now = Date.now();
       const newSession: SessionSummary = {
@@ -848,7 +854,7 @@ export default function ChatClient() {
     } finally {
       setCreatingSession(false);
     }
-  }, [callWithAuth, showToast, creatingSession, isOnline, preferredCoachType]);
+  }, [callWithAuth, showToast, creatingSession, isOnline]);
 
   const activeSessionId = sessionIdRef.current;
   const sessionSelectValue = useMemo(() => {
