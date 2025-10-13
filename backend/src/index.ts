@@ -53,7 +53,12 @@ type Msg = {
   state?: CoachingState;
   coachType?: CoachType;
 };
-type SessionCache = { messages: Msg[]; stage?: Stage; coachType?: CoachType };
+type SessionCache = {
+  messages: Msg[];
+  stage?: Stage;
+  coachType?: CoachType;
+  faceSheetSummary?: string | null;
+};
 type CoachPayload = { stage: Stage; message: string; state: CoachingState };
 
 type RouteHandler = (context: RequestContext) => Promise<void> | void;
@@ -218,6 +223,120 @@ const SAFETY_CONCERNS = [
   "other",
 ] as const;
 type SafetyConcernOption = (typeof SAFETY_CONCERNS)[number];
+
+const HONORIFIC_LABELS: Record<HonorificOption, string> = {
+  san: "さん",
+  kun: "くん",
+  chan: "ちゃん",
+  noHonorific: "呼び捨て",
+  english: "英名で",
+  other: "その他",
+};
+
+const GENDER_LABELS: Record<GenderOption, string> = {
+  female: "女性",
+  male: "男性",
+  nonBinary: "ノンバイナリー",
+  transWoman: "トランス女性",
+  transMan: "トランス男性",
+  xGender: "Xジェンダー/その他",
+  noAnswer: "回答しない",
+  other: "その他",
+  selfDescribe: "自由記述",
+};
+
+const EMPLOYMENT_LABELS: Record<EmploymentTypeOption, string> = {
+  fullTime: "常勤",
+  partTime: "非常勤",
+  dispatch: "派遣",
+  student: "学生",
+  other: "その他",
+};
+
+const WORK_PATTERN_LABELS: Record<WorkPatternOption, string> = {
+  day: "日勤のみ",
+  twoShift: "2交代",
+  threeShift: "3交代",
+  nightOnly: "夜勤専従",
+  flexRemote: "フレックス/リモート",
+  other: "その他",
+};
+
+const LIVING_ARRANGEMENT_LABELS: Record<LivingArrangementOption, string> = {
+  alone: "ひとり暮らし",
+  withFamily: "家族と同居",
+  withOthers: "同居者あり（家族以外）",
+  noAnswer: "未回答",
+};
+
+const CARE_RESPONSIBILITY_LABELS: Record<CareResponsibilityOption, string> = {
+  childcare: "育児",
+  caregiving: "介護",
+  pets: "ペット",
+  none: "なし",
+  other: "その他",
+};
+
+const PERSONALITY_TAG_LABELS: Record<PersonalityTagOption, string> = {
+  logical: "論理的",
+  empathetic: "共感的",
+  careful: "慎重",
+  challenging: "挑戦的",
+  planned: "計画的",
+  flexible: "柔軟",
+  observant: "観察的",
+  quickDecider: "即断型",
+  other: "その他",
+};
+
+const COACHING_TOPIC_LABELS: Record<CoachingTopicOption, string> = {
+  sleepFatigue: "睡眠/疲労",
+  stressCare: "ストレス/感情整理",
+  timeManagement: "時間管理/先延ばし",
+  communication: "コミュニケーション",
+  careerLearning: "キャリア/学習",
+  healthHabits: "健康習慣（食/運動）",
+  finance: "金銭/家計",
+  relationships: "対人関係",
+  selfCompassion: "セルフコンパッション",
+  selfEfficacy: "自己効力感",
+  other: "その他",
+};
+
+const SAFETY_CONCERN_LABELS: Record<SafetyConcernOption, string> = {
+  none: "特になし",
+  insomnia: "強い不眠の持続",
+  selfHarm: "自傷他害の衝動",
+  domesticViolence: "家庭内暴力の懸念",
+  substance: "薬物/アルコールの問題",
+  other: "その他",
+};
+
+const LIFE_AREA_LABELS: Record<LifeAreaKey, string> = {
+  sleep: "睡眠",
+  nutrition: "食事",
+  activity: "運動/身体活動",
+  work: "仕事",
+  learning: "学習/自己研鑽",
+  family: "家族",
+  friends: "友人/同僚",
+  hobby: "趣味/余暇",
+  finance: "経済/家計",
+  housing: "住環境",
+  physicalHealth: "健康（身体）",
+  mental: "メンタル/感情",
+  rest: "休息/回復",
+  digital: "デジタル/スマホ",
+  timeManagement: "時間管理",
+};
+
+const PERSONALITY_TRAIT_LABELS: Record<PersonalityTraitKey, string> = {
+  extraversion: "外向性",
+  agreeableness: "協調性",
+  conscientiousness: "誠実性",
+  emotionalStability: "情緒安定性",
+  openness: "開放性",
+};
 
 type FaceSheetArea = {
   satisfaction: number | null;
@@ -550,7 +669,8 @@ async function handleCreateSession({ uid, res, body }: RequestContext & { uid: s
   const now = Date.now();
   const stage: Stage = "intro";
 
-  memory.set(sessionId, { messages: [], stage, coachType });
+  const faceSheetSummary = await loadFaceSheetSummary(uid);
+  memory.set(sessionId, { messages: [], stage, coachType, faceSheetSummary });
 
   try {
     await db
@@ -604,14 +724,18 @@ async function handleCoach(context: RequestContext & { uid: string }) {
     const coachType = requestedCoachType ?? history.coachType ?? DEFAULT_COACH_TYPE;
     const prompt = coachPrompts[coachType] ?? coachPrompts[DEFAULT_COACH_TYPE];
 
-    const parts = [
-      { text: prompt },
+    const parts = [{ text: prompt }];
+    if (history.faceSheetSummary) {
+      parts.push({ text: history.faceSheetSummary });
+    }
+    parts.push(
       ...history.messages.map((m) => ({ text: `${m.role.toUpperCase()}: ${m.content}` })),
       { text: `USER: ${userText}` },
       {
-      text: "指示を厳守し、出力は必ず1) 'Coaching' セクション 2) 'State JSON' セクション（指定スキーマの完全なJSONオブジェクト）の順で示すこと。",
+        text:
+          "指示を厳守し、出力は必ず1) 'Coaching' セクション 2) 'State JSON' セクション（指定スキーマの完全なJSONオブジェクト）の順で示すこと。",
       },
-    ];
+    );
 
     const text = await generateGeminiContent(parts);
     const payload = parseCoachPayload(text, history.stage ?? "intro");
@@ -629,7 +753,12 @@ async function handleCoach(context: RequestContext & { uid: string }) {
       state: payload.state,
       coachType,
     });
-    memory.set(sessionId, { messages: nextMessages, stage: payload.stage, coachType });
+    memory.set(sessionId, {
+      messages: nextMessages,
+      stage: payload.stage,
+      coachType,
+      faceSheetSummary: history.faceSheetSummary,
+    });
 
     const ref = db
       .collection("users")
@@ -799,6 +928,242 @@ async function handleUpdateFaceSheet(context: RequestContext & { uid: string }) 
   }
 }
 
+async function loadFaceSheetSummary(uid: string): Promise<string | null> {
+  try {
+    const faceSheetRef = db
+      .collection("users")
+      .doc(uid)
+      .collection("meta")
+      .doc("faceSheet");
+    const snapshot = await faceSheetRef.get();
+    if (!snapshot.exists) {
+      return null;
+    }
+    const data = snapshot.data() as Record<string, unknown> | undefined;
+    if (!data) {
+      return null;
+    }
+    const faceSheet = sanitizeFaceSheetPayload(data);
+    if (!faceSheet) {
+      return null;
+    }
+    const summary = formatFaceSheetSummary(faceSheet);
+    return summary ? summary : null;
+  } catch (error) {
+    log("warn", "failed_to_load_face_sheet_summary", {
+      uid,
+      error: serializeError(error),
+    });
+    return null;
+  }
+}
+
+function formatFaceSheetSummary(faceSheet: FaceSheet): string {
+  const lines: string[] = ["【フェイスシート情報】"];
+
+  const basicLines: string[] = [];
+  if (faceSheet.basic.nickname) {
+    basicLines.push(`呼び名: ${faceSheet.basic.nickname}`);
+  }
+  if (faceSheet.basic.honorifics.length > 0) {
+    const labels = faceSheet.basic.honorifics.map((item) => HONORIFIC_LABELS[item] ?? item);
+    basicLines.push(`敬称: ${labels.join(" / ")}`);
+  }
+  if (faceSheet.basic.honorificOther) {
+    basicLines.push(`敬称（その他）: ${faceSheet.basic.honorificOther}`);
+  }
+  if (faceSheet.basic.gender.length > 0) {
+    const labels = faceSheet.basic.gender.map((item) => GENDER_LABELS[item] ?? item);
+    basicLines.push(`性別・ジェンダー: ${labels.join(" / ")}`);
+  }
+  if (faceSheet.basic.genderOther) {
+    basicLines.push(`ジェンダー（その他）: ${faceSheet.basic.genderOther}`);
+  }
+  if (faceSheet.basic.genderFreeText) {
+    basicLines.push(`ジェンダー補足: ${faceSheet.basic.genderFreeText}`);
+  }
+  if (faceSheet.basic.age) {
+    basicLines.push(`年齢: ${faceSheet.basic.age}`);
+  }
+  if (basicLines.length > 0) {
+    lines.push("〈基本情報〉");
+    for (const line of basicLines) {
+      lines.push(`- ${line}`);
+    }
+  }
+
+  const workLines: string[] = [];
+  if (faceSheet.work.role) {
+    workLines.push(`職種・役割: ${faceSheet.work.role}`);
+  }
+  if (faceSheet.work.organization) {
+    workLines.push(`所属: ${faceSheet.work.organization}`);
+  }
+  if (faceSheet.work.employmentTypes.length > 0) {
+    const labels = faceSheet.work.employmentTypes.map((item) => EMPLOYMENT_LABELS[item] ?? item);
+    workLines.push(`雇用形態: ${labels.join(" / ")}`);
+  }
+  if (faceSheet.work.employmentOther) {
+    workLines.push(`雇用形態（その他）: ${faceSheet.work.employmentOther}`);
+  }
+  if (faceSheet.work.workPatterns.length > 0) {
+    const labels = faceSheet.work.workPatterns.map((item) => WORK_PATTERN_LABELS[item] ?? item);
+    workLines.push(`勤務形態: ${labels.join(" / ")}`);
+  }
+  if (faceSheet.work.workPatternOther) {
+    workLines.push(`勤務形態（その他）: ${faceSheet.work.workPatternOther}`);
+  }
+  if (faceSheet.work.weeklyHours) {
+    workLines.push(`週あたり勤務時間: ${faceSheet.work.weeklyHours}`);
+  }
+  if (faceSheet.work.stressors) {
+    workLines.push(`主なストレス要因: ${faceSheet.work.stressors}`);
+  }
+  if (faceSheet.work.supportResources) {
+    workLines.push(`頼れる支援資源: ${faceSheet.work.supportResources}`);
+  }
+  if (workLines.length > 0) {
+    lines.push("〈仕事〉");
+    for (const line of workLines) {
+      lines.push(`- ${line}`);
+    }
+  }
+
+  const familyLines: string[] = [];
+  if (faceSheet.family.livingArrangement) {
+    const label = LIVING_ARRANGEMENT_LABELS[faceSheet.family.livingArrangement];
+    familyLines.push(`同居状況: ${label ?? faceSheet.family.livingArrangement}`);
+  }
+  if (faceSheet.family.household) {
+    familyLines.push(`世帯構成メモ: ${faceSheet.family.household}`);
+  }
+  if (faceSheet.family.careResponsibilities.length > 0) {
+    const labels = faceSheet.family.careResponsibilities.map(
+      (item) => CARE_RESPONSIBILITY_LABELS[item] ?? item,
+    );
+    familyLines.push(`ケア責任: ${labels.join(" / ")}`);
+  }
+  if (faceSheet.family.careOther) {
+    familyLines.push(`ケア責任（その他）: ${faceSheet.family.careOther}`);
+  }
+  if (faceSheet.family.careTime) {
+    familyLines.push(`ケアにかける時間: ${faceSheet.family.careTime}`);
+  }
+  if (familyLines.length > 0) {
+    lines.push("〈家族・暮らし〉");
+    for (const line of familyLines) {
+      lines.push(`- ${line}`);
+    }
+  }
+
+  const personalityLines: string[] = [];
+  const traitEntries = Object.entries(faceSheet.personality.traits).filter(
+    (entry): entry is [PersonalityTraitKey, number] => entry[1] !== null && Number.isFinite(entry[1]),
+  );
+  if (traitEntries.length > 0) {
+    const traitTexts = traitEntries.map(([key, value]) => {
+      const label = PERSONALITY_TRAIT_LABELS[key] ?? key;
+      return `${label}:${value}`;
+    });
+    personalityLines.push(`特性スコア: ${traitTexts.join(" / ")}`);
+  }
+  if (faceSheet.personality.tags.length > 0) {
+    const labels = faceSheet.personality.tags.map((item) => PERSONALITY_TAG_LABELS[item] ?? item);
+    personalityLines.push(`傾向タグ: ${labels.join(" / ")}`);
+  }
+  if (faceSheet.personality.tagOther) {
+    personalityLines.push(`傾向タグ（その他）: ${faceSheet.personality.tagOther}`);
+  }
+  if (faceSheet.personality.strengths) {
+    personalityLines.push(`強み: ${faceSheet.personality.strengths}`);
+  }
+  if (faceSheet.personality.cautions) {
+    personalityLines.push(`気をつけたいこと: ${faceSheet.personality.cautions}`);
+  }
+  if (personalityLines.length > 0) {
+    lines.push("〈性格・資質〉");
+    for (const line of personalityLines) {
+      lines.push(`- ${line}`);
+    }
+  }
+
+  const lifeLines: string[] = [];
+  const areaEntries = Object.entries(faceSheet.lifeInventory.areas) as Array<[
+    LifeAreaKey,
+    FaceSheetArea,
+  ]>;
+  for (const [key, area] of areaEntries) {
+    const hasContent = (area.satisfaction ?? null) !== null || Boolean(area.note);
+    if (!hasContent) {
+      continue;
+    }
+    const label = LIFE_AREA_LABELS[key] ?? key;
+    const parts: string[] = [];
+    if (area.satisfaction !== null) {
+      parts.push(`満足度:${area.satisfaction}`);
+    }
+    if (area.note) {
+      parts.push(`メモ:${area.note}`);
+    }
+    lifeLines.push(`${label}: ${parts.join(" / ")}`);
+  }
+  if (faceSheet.lifeInventory.dailyRoutine) {
+    lifeLines.push(`1日の流れ: ${faceSheet.lifeInventory.dailyRoutine}`);
+  }
+  if (lifeLines.length > 0) {
+    lines.push("〈生活の棚卸し〉");
+    for (const line of lifeLines) {
+      lines.push(`- ${line}`);
+    }
+  }
+
+  const coachingLines: string[] = [];
+  if (faceSheet.coaching.topics.length > 0) {
+    const topicTexts = faceSheet.coaching.topics.map((topic) => {
+      const label = COACHING_TOPIC_LABELS[topic.id] ?? topic.id;
+      return topic.starred ? `★${label}` : label;
+    });
+    coachingLines.push(`関心トピック: ${topicTexts.join(" / ")}`);
+  }
+  if (faceSheet.coaching.topicOther) {
+    coachingLines.push(`トピック（その他）: ${faceSheet.coaching.topicOther}`);
+  }
+  if (faceSheet.coaching.challenge) {
+    coachingLines.push(`現在の課題: ${faceSheet.coaching.challenge}`);
+  }
+  if (faceSheet.coaching.kpi) {
+    coachingLines.push(`大切にしたい指標: ${faceSheet.coaching.kpi}`);
+  }
+  if (coachingLines.length > 0) {
+    lines.push("〈コーチングの希望〉");
+    for (const line of coachingLines) {
+      lines.push(`- ${line}`);
+    }
+  }
+
+  const safetyLines: string[] = [];
+  const meaningfulConcerns = faceSheet.safety.concerns.filter((item) => item !== "none");
+  if (meaningfulConcerns.length > 0) {
+    const labels = meaningfulConcerns.map((item) => SAFETY_CONCERN_LABELS[item] ?? item);
+    safetyLines.push(`安全面の懸念: ${labels.join(" / ")}`);
+  } else if (faceSheet.safety.concerns.includes("none")) {
+    safetyLines.push(`安全面の懸念: ${SAFETY_CONCERN_LABELS.none}`);
+  }
+  if (faceSheet.safety.concernOther) {
+    safetyLines.push(`安全面の補足: ${faceSheet.safety.concernOther}`);
+  }
+  safetyLines.push(`情報共有への同意: ${faceSheet.safety.consent ? "はい" : "いいえ"}`);
+  if (safetyLines.length > 0) {
+    lines.push("〈安全面〉");
+    for (const line of safetyLines) {
+      lines.push(`- ${line}`);
+    }
+  }
+
+  const summary = lines.join("\n").trim();
+  return summary === "【フェイスシート情報】" ? "" : summary;
+}
+
 function clampLimit(raw: number): number {
   if (!Number.isFinite(raw) || raw <= 0) {
     return 30;
@@ -811,7 +1176,7 @@ function clampLimit(raw: number): number {
 
 async function loadHistory(uid: string, sessionId: string): Promise<SessionCache> {
   const cached = memory.get(sessionId);
-    if (cached) {
+  if (cached) {
     const normalizedCoachType =
       normalizeCoachType(cached.coachType) ?? DEFAULT_COACH_TYPE;
     if (cached.coachType !== normalizedCoachType) {
@@ -886,10 +1251,13 @@ async function loadHistory(uid: string, sessionId: string): Promise<SessionCache
     return acc;
   }, []);
 
+  const faceSheetSummary = await loadFaceSheetSummary(uid);
+
   const result: SessionCache = {
     messages: items,
     stage: parseStage(sessionData.stage),
     coachType,
+    faceSheetSummary,
   };
 
   memory.set(sessionId, result);
@@ -1526,55 +1894,6 @@ function sanitizeText(value: unknown, maxLength = 500): string {
     return "";
   }
   return trimmed.length > maxLength ? trimmed.slice(0, maxLength) : trimmed;
-}
-
-function normalizeStage(value: unknown): Stage | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-
-   const lower = trimmed.toLowerCase();
-  if (VALID_STAGES.has(lower as Stage)) {
-    return lower as Stage;
-  }
-
-  const simplified = lower.replace(/[^a-z]/g, "");
-  switch (simplified) {
-    case "intro":
-    case "introduction":
-    case "start":
-      return "intro";
-    case "inventory":
-    case "inventry":
-    case "discover":
-      return "inventory";
-    case "g":
-    case "goal":
-      return "goal";
-    case "r":
-    case "reality":
-      return "reality";
-    case "o":
-    case "options":
-      return "options";
-    case "w":
-    case "will":
-      return "will";
-    case "wrap":
-    case "wrapup":
-    case "wrapreview":
-    case "review":
-    case "close":
-    case "closing":
-      return "closing";
-    default:
-      return undefined;
-  }
 }
 
 function parseAllowedOrigins(input: string): string[] {
