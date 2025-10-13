@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { auth } from "@/lib/firebase";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import {
@@ -1036,7 +1036,7 @@ export default function ChatClient() {
   );
 
   if (entryView !== "chat") {
-    let entryContent: JSX.Element | null = null;
+    let entryContent: ReactElement | null = null;
 
     if (entryView === "select") {
       entryContent = (
