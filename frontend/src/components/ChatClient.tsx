@@ -891,10 +891,6 @@ export default function ChatClient() {
     if (!activeSessionId) return "";
     return sessions.some((session) => session.sessionId === activeSessionId) ? activeSessionId : "";
   }, [activeSessionId, sessions]);
-  const quickActions = useMemo(
-    () => ["過去のセッションから選ぶ", "新規セッション", "何でもトーク", "望む未来の実現に向けた対話"],
-    [],
-  );
   const latestSessions = useMemo(() => sessions.slice(0, 3), [sessions]);
   const remainingSessions = useMemo(() => sessions.slice(3), [sessions]);
   const entryCoachDetails = useMemo(() => COACH_DETAILS[entryCoachSelection], [entryCoachSelection]);
@@ -1625,6 +1621,17 @@ export default function ChatClient() {
               <button
                 type="button"
                 onClick={() => {
+                  setEntryView("select");
+                  setEntryError(null);
+                }}
+                className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2"
+              >
+                <span aria-hidden="true">←</span>
+                選択画面に戻る
+              </button>
+              <button
+                type="button"
+                onClick={() => {
                   void createSessionAndSelect();
                 }}
                 className="inline-flex items-center gap-2 rounded-full bg-teal-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
@@ -1776,21 +1783,6 @@ export default function ChatClient() {
                   <p className="rounded-2xl border border-slate-200 bg-white px-5 py-4 text-base shadow-sm">
                     {restoring ? "会話履歴を読み込んでいます..." : "コーチに相談したい内容を入力して会話を始めましょう。"}
                   </p>
-                  <div className="flex flex-wrap items-center justify-center gap-3">
-                    {quickActions.map((action) => (
-                      <button
-                        key={action}
-                        type="button"
-                        onClick={() => {
-                          setInput(action);
-                          showToast("success", `${action} を入力欄にセットしました。`);
-                        }}
-                        className="rounded-full border border-teal-200 bg-white px-4 py-2 text-sm font-medium text-teal-700 transition hover:border-teal-300 hover:bg-teal-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2"
-                      >
-                        {action}
-                      </button>
-                    ))}
-                  </div>
                 </div>
               ) : (
                 <ul className="space-y-4" aria-live="polite">
