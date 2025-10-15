@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import FaceSheetForm from "@/components/face-sheet/FaceSheetForm";
@@ -188,10 +189,23 @@ export default function FaceSheetClient() {
     [callWithAuth],
   );
 
+  const BackToSelectionButton = () => (
+    <Link
+      href="/"
+      className="inline-flex shrink-0 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2"
+    >
+      <span aria-hidden="true">←</span>
+      選択画面に戻る
+    </Link>
+  );
+
   if (!authed) {
     return (
       <section className="rounded-3xl border border-slate-200 bg-white p-6 text-slate-900 shadow-sm">
-        <h2 className="text-xl font-semibold text-slate-900">フェイスシート</h2>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <h2 className="text-xl font-semibold text-slate-900">フェイスシート</h2>
+          <BackToSelectionButton />
+        </div>
         <p className="mt-3 text-sm text-slate-600">
           フェイスシートの登録・更新にはサインインが必要です。トップページからサインインし、再度アクセスしてください。
         </p>
@@ -202,15 +216,20 @@ export default function FaceSheetClient() {
   return (
     <section className="space-y-4">
       <header className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h1 className="text-2xl font-semibold text-slate-900">フェイスシート</h1>
-        <p className="mt-2 text-sm text-slate-600">
-          初回に登録し、その後は必要に応じて更新してください。変更内容は保存ボタンを押したタイミングで反映されます。
-        </p>
-        {updatedAt ? (
-          <p className="mt-2 text-xs text-slate-500">
-            最終更新: {new Date(updatedAt).toLocaleString("ja-JP")}
-          </p>
-        ) : null}
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900">フェイスシート</h1>
+            <p className="mt-2 text-sm text-slate-600">
+              初回に登録し、その後は必要に応じて更新してください。変更内容は保存ボタンを押したタイミングで反映されます。
+            </p>
+            {updatedAt ? (
+              <p className="mt-2 text-xs text-slate-500">
+                最終更新: {new Date(updatedAt).toLocaleString("ja-JP")}
+              </p>
+            ) : null}
+          </div>
+          <BackToSelectionButton />
+        </div>
       </header>
       <FaceSheetForm
         value={form}
