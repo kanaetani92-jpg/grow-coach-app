@@ -33,6 +33,7 @@ Firebase コンソールでは Identity Platform/Firebase Authentication の許�
 - チャット UI（会話履歴の復元、新規セッション作成、送信制限・再試行ボタン・ローディング表示）
 - 利用規約/プライバシー/同意バナー
 - 送受信イベントの軽量ロギング
+- フェイスシート（`src/components/face-sheet/FaceSheetClient.tsx`）。フェイスシートの登録・更新画面で、保存説明文やサーバー接続エラー時のメッセージが表示されます。
 
 ## 注意事項
 
