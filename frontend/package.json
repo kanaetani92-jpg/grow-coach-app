@@ -6,7 +6,8 @@
     "dev": "next dev --turbopack",
     "build": "next build --turbopack",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "save-face-sheet": "node ./scripts/save-face-sheet.mjs"
   },
   "dependencies": {
     "firebase": "^12.3.0",
