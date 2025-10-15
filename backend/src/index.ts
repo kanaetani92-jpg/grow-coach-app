@@ -535,7 +535,7 @@ function applyCors(res: http.ServerResponse, req: http.IncomingMessage) {
   const allowOrigin = resolveAllowedOrigin(originHeader, allowedOrigins);
 
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,OPTIONS");
   res.setHeader("Vary", "Origin");
 
   if (!allowOrigin || allowOrigin === "*") {
