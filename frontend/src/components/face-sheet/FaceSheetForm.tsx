@@ -140,6 +140,7 @@ type FaceSheetFormProps = {
   value: FaceSheet;
   onChange: (next: FaceSheet) => void;
   onSubmit: () => void;
+  onRetry?: () => void;
   loading: boolean;
   saving: boolean;
   error: string | null;
@@ -150,6 +151,7 @@ export default function FaceSheetForm({
   value,
   onChange,
   onSubmit,
+  onRetry,
   loading,
   saving,
   error,
@@ -314,8 +316,21 @@ export default function FaceSheetForm({
         <p className="text-sm text-slate-500">フェイスシートを読み込み中です…</p>
       ) : null}
       {error ? (
-        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-          {error}
+        <div className="flex flex-wrap items-start justify-between gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          <span>{error}</span>
+          {onRetry ? (
+            <button
+              type="button"
+              onClick={() => {
+                if (disabled) return;
+                onRetry();
+              }}
+              className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 transition hover:border-rose-300 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={disabled}
+            >
+              再試行
+            </button>
+          ) : null}
         </div>
       ) : null}
       {status ? (

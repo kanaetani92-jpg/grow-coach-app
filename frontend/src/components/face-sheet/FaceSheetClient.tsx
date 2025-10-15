@@ -216,6 +216,7 @@ export default function FaceSheetClient() {
         value={form}
         onChange={setForm}
         onSubmit={() => handleSave(form)}
+        onRetry={loadFaceSheet}
         loading={loading}
         saving={saving}
         error={error}
